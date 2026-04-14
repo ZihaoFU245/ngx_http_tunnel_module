@@ -104,6 +104,8 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
+    r->content_handler = ngx_http_tunnel_content_handler;
+
     return NGX_DECLINED;
 }
 

@@ -27,14 +27,14 @@ ngx_http_tunnel_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_str_t authority;
     ngx_http_upstream_resolved_t *resolved;
 
-    if (r->headers_in.server.len != 0)
-    {
-        authority = r->headers_in.server;
-    }
-    else if (r->host_start != NULL && r->host_end != NULL)
+    if (r->host_start != NULL && r->host_end != NULL)
     {
         authority.data = r->host_start;
         authority.len = r->host_end - r->host_start;
+    }
+    else if (r->headers_in.server.len != 0)
+    {
+        authority = r->headers_in.server;
     }
     else
     {
@@ -158,13 +158,14 @@ void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx)
     resolved->naddrs = resolver_ctx->naddrs;
     resolved->addrs = resolver_ctx->addrs;
 
-    ngx_resolve_name_done(resolver_ctx);
-
     if (ngx_http_upstream_create_round_robin_peer(r, resolved) != NGX_OK)
     {
+        ngx_resolve_name_done(resolver_ctx);
         ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
+
+    ngx_resolve_name_done(resolver_ctx);
 
     if (ngx_http_tunnel_connect_next(ctx) != NGX_OK)
     {
