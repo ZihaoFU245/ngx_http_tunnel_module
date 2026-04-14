@@ -9,4 +9,7 @@ to enable them.
 
 - [x] IsCompleted ?
 
-2. Milestone 1 [ ]
+TODO:
+
+- [x] Milestone 1
+- [ ] Milestone 2
