@@ -89,6 +89,7 @@ ngx_http_tunnel_connect_next(ngx_http_tunnel_ctx_t *ctx)
     if (rc == NGX_DECLINED)
     {
         ngx_http_tunnel_release_peer(r, NGX_PEER_FAILED);
+        ctx->peer_acquired = 0;
 
         if (u->peer.tries)
         {
@@ -101,6 +102,7 @@ ngx_http_tunnel_connect_next(ngx_http_tunnel_ctx_t *ctx)
     if (rc == NGX_ERROR)
     {
         ngx_http_tunnel_release_peer(r, NGX_PEER_FAILED);
+        ctx->peer_acquired = 0;
         return NGX_ERROR;
     }
 
@@ -189,6 +191,7 @@ void ngx_http_tunnel_connect_handler(ngx_event_t *ev)
         r->upstream->peer.connection = NULL;
         ctx->waiting_connect = 0;
         ngx_http_tunnel_release_peer(r, NGX_PEER_FAILED);
+        ctx->peer_acquired = 0;
 
         if (r->upstream->peer.tries && ngx_http_tunnel_connect_next(ctx) == NGX_OK)
         {
@@ -210,6 +213,7 @@ void ngx_http_tunnel_connect_handler(ngx_event_t *ev)
         r->upstream->peer.connection = NULL;
         ctx->waiting_connect = 0;
         ngx_http_tunnel_release_peer(r, NGX_PEER_FAILED);
+        ctx->peer_acquired = 0;
 
         if (r->upstream->peer.tries && ngx_http_tunnel_connect_next(ctx) == NGX_OK)
         {
