@@ -43,6 +43,11 @@ char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent,
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_set_proxy_authenticate(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_access_denied(ngx_http_request_t *r,
+                                        ngx_http_tunnel_srv_conf_t *tscf);
+ngx_int_t ngx_http_tunnel_check_auth(ngx_http_request_t *r,
+                                     ngx_http_tunnel_srv_conf_t *tscf);
 
 ngx_int_t ngx_http_tunnel_init_upstream_peer(ngx_http_request_t *r,
                                              ngx_http_tunnel_ctx_t *ctx);
