@@ -335,12 +335,12 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
         ngx_http_tunnel_clear_timer(pc->write);
         ngx_http_tunnel_clear_timer(c->read);
         ngx_http_tunnel_clear_timer(c->write);
-    }
 
-    ngx_http_tunnel_update_idle_timer(pc->write, idle_timeout);
-    ngx_http_tunnel_update_idle_timer(pc->read, idle_timeout);
-    ngx_http_tunnel_update_idle_timer(c->write, idle_timeout);
-    ngx_http_tunnel_update_idle_timer(c->read, idle_timeout);
+        ngx_http_tunnel_update_idle_timer(pc->write, idle_timeout);
+        ngx_http_tunnel_update_idle_timer(pc->read, idle_timeout);
+        ngx_http_tunnel_update_idle_timer(c->write, idle_timeout);
+        ngx_http_tunnel_update_idle_timer(c->read, idle_timeout);
+    }
 }
 
 void ngx_http_tunnel_release_peer(ngx_http_request_t *r, ngx_uint_t state)
