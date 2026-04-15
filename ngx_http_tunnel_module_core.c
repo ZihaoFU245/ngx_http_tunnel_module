@@ -31,6 +31,13 @@ ngx_http_tunnel_access_denied(ngx_http_request_t *r,
 {
     if (tscf->probe_resistance)
     {
+        ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
+        h->hash = 1;
+        h->next = NULL;
+        ngx_str_set(&h->key, "Allow");
+        // Below is some hard coding values, need some rework in future
+        ngx_str_set(&h->value, "GET, POST, HEAD, OPTIONS");
+
         return NGX_HTTP_NOT_ALLOWED;
     }
 
@@ -48,7 +55,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
     ngx_table_elt_t *header;
     u_char *colon;
 
-    if (tscf->auth_username.len == 0 || tscf->auth_password.len == 0)
+    if (tscf->auth_username.len == 0 && tscf->auth_password.len == 0)
     {
         return NGX_OK;
     }
@@ -428,6 +435,13 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
     ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
     ngx_conf_merge_value(conf->padding, prev->padding, 0);
+
+    if ((conf->auth_username.len == 0) != (conf->auth_password.len == 0))
+    {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "both tunnel_auth_username and tunnel_auth_password must be set together");
+        return NGX_CONF_ERROR;
+    }
 
     return NGX_CONF_OK;
 }
