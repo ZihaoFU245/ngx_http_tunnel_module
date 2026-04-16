@@ -25,6 +25,7 @@ typedef struct
     ngx_http_request_t *request;
     ngx_buf_t *client_buffer;
     ngx_buf_t *upstream_buffer;
+    ngx_chain_t *downstream_chain;
     ngx_http_upstream_resolved_t *resolved;
     ngx_resolver_ctx_t *resolver_ctx;
     unsigned finalized : 1;
@@ -32,6 +33,7 @@ typedef struct
     unsigned waiting_connect : 1;
     unsigned resolving : 1;
     unsigned peer_acquired : 1;
+    unsigned request_body_started : 1;
 } ngx_http_tunnel_ctx_t;
 
 extern ngx_module_t ngx_http_tunnel_module;
@@ -58,6 +60,9 @@ void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx);
 
 ngx_int_t ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_send_connected(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_stream_downstream(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx);
 void ngx_http_tunnel_connect_handler(ngx_event_t *ev);
 void ngx_http_tunnel_downstream_read_handler(ngx_http_request_t *r);
 void ngx_http_tunnel_downstream_write_handler(ngx_http_request_t *r);

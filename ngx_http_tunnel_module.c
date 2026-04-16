@@ -144,11 +144,6 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (r->http_version != NGX_HTTP_VERSION_11)
-    {
-        return NGX_HTTP_NOT_IMPLEMENTED;
-    }
-
     ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
     if (ctx != NULL)
     {
@@ -207,9 +202,12 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        if (ngx_http_tunnel_connect_next(ctx) != NGX_OK)
+        rc = ngx_http_tunnel_connect_next(ctx);
+        if (rc != NGX_OK)
         {
-            ngx_http_tunnel_finalize(ctx, NGX_HTTP_BAD_GATEWAY);
+            ngx_http_tunnel_finalize(
+                ctx,
+                rc >= NGX_HTTP_SPECIAL_RESPONSE ? rc : NGX_HTTP_BAD_GATEWAY);
         }
 
         return NGX_DONE;

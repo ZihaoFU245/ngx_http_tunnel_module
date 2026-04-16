@@ -27,13 +27,24 @@ ngx_http_tunnel_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_str_t authority;
     ngx_http_upstream_resolved_t *resolved;
 
-    if (r->host_start != NULL && r->host_end != NULL)
+    if (r->http_version == NGX_HTTP_VERSION_11)
     {
+        if (r->host_start == NULL || r->host_end == NULL)
+        {
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
         authority.data = r->host_start;
         authority.len = r->host_end - r->host_start;
     }
-    else if (r->headers_in.server.len != 0)
+    else if (r->http_version == NGX_HTTP_VERSION_20 ||
+             r->http_version == NGX_HTTP_VERSION_30)
     {
+        if (r->headers_in.server.len == 0)
+        {
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
         authority = r->headers_in.server;
     }
     else
@@ -133,6 +144,7 @@ ngx_http_tunnel_connect_next(ngx_http_tunnel_ctx_t *ctx)
 
 void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx)
 {
+    ngx_int_t rc;
     ngx_http_request_t *r;
     ngx_http_tunnel_ctx_t *ctx;
     ngx_http_upstream_resolved_t *resolved;
@@ -169,15 +181,18 @@ void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx)
 
     ngx_resolve_name_done(resolver_ctx);
 
-    if (ngx_http_tunnel_connect_next(ctx) != NGX_OK)
+    rc = ngx_http_tunnel_connect_next(ctx);
+    if (rc != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_BAD_GATEWAY);
+        ngx_http_tunnel_finalize(
+            ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE ? rc : NGX_HTTP_BAD_GATEWAY);
     }
 }
 
 void ngx_http_tunnel_connect_handler(ngx_event_t *ev)
 {
     ngx_connection_t *c;
+    ngx_int_t rc;
     ngx_http_request_t *r;
     ngx_http_tunnel_ctx_t *ctx;
 
@@ -224,8 +239,12 @@ void ngx_http_tunnel_connect_handler(ngx_event_t *ev)
         return;
     }
 
-    if (ngx_http_tunnel_start(ctx) != NGX_OK)
+    rc = ngx_http_tunnel_start(ctx);
+    if (rc != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        ngx_http_tunnel_finalize(
+            ctx,
+            rc >= NGX_HTTP_SPECIAL_RESPONSE ? rc
+                                            : NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
 }

@@ -1,5 +1,8 @@
 #include "ngx_http_tunnel_module.h"
 
+static ngx_int_t ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
+                                             ngx_uint_t from_upstream,
+                                             ngx_uint_t do_write);
 static void ngx_http_tunnel_clear_timer(ngx_event_t *ev);
 static void ngx_http_tunnel_update_idle_timer(ngx_event_t *ev,
                                               ngx_msec_t timeout);
@@ -10,6 +13,7 @@ ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx)
 {
     ngx_connection_t *c;
     ngx_connection_t *pc;
+    ngx_int_t rc;
     ngx_http_request_t *r;
     ngx_http_upstream_t *u;
     ngx_http_core_loc_conf_t *clcf;
@@ -31,7 +35,12 @@ ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx)
 
     if (clcf->tcp_nodelay)
     {
-        if (ngx_tcp_nodelay(c) != NGX_OK || ngx_tcp_nodelay(pc) != NGX_OK)
+        if (ngx_tcp_nodelay(pc) != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+
+        if (!ngx_http_tunnel_stream_downstream(r) && ngx_tcp_nodelay(c) != NGX_OK)
         {
             return NGX_ERROR;
         }
@@ -40,6 +49,12 @@ ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx)
     if (ngx_http_tunnel_send_connected(r) != NGX_OK)
     {
         return NGX_ERROR;
+    }
+
+    rc = ngx_http_tunnel_init_request_body(ctx);
+    if (rc != NGX_OK)
+    {
+        return rc;
     }
 
     pc->read->handler = ngx_http_tunnel_upstream_read_handler;
@@ -65,7 +80,8 @@ ngx_http_tunnel_send_connected(ngx_http_request_t *r)
     ngx_int_t rc;
 
     r->headers_out.status = NGX_HTTP_OK;
-    r->headers_out.content_length_n = 0;
+    r->headers_out.content_length_n = -1;
+    r->headers_out.content_length = NULL;
     ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
     ngx_str_null(&r->headers_out.content_type);
 
@@ -136,6 +152,27 @@ void ngx_http_tunnel_upstream_write_handler(ngx_event_t *ev)
 void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
                              ngx_uint_t do_write)
 {
+    ngx_int_t rc;
+
+    if (ngx_http_tunnel_stream_downstream(ctx->request))
+    {
+        rc = ngx_http_tunnel_process_stream(ctx);
+    }
+    else
+    {
+        rc = ngx_http_tunnel_process_raw(ctx, from_upstream, do_write);
+    }
+
+    if (rc != NGX_OK)
+    {
+        ngx_http_tunnel_finalize(ctx, rc);
+    }
+}
+
+static ngx_int_t
+ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
+                            ngx_uint_t from_upstream, ngx_uint_t do_write)
+{
     size_t size;
     ssize_t n;
     ngx_buf_t *b;
@@ -155,7 +192,7 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
 
     if (ctx->finalized || pc == NULL)
     {
-        return;
+        return NGX_OK;
     }
 
     if (c->read->timedout || c->write->timedout || pc->read->timedout ||
@@ -163,8 +200,7 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
     {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
                       "tunnel idle timeout");
-        ngx_http_tunnel_finalize(ctx, 0);
-        return;
+        return NGX_OK;
     }
 
     activity = 0;
@@ -194,8 +230,7 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
 
                 if (n == NGX_ERROR)
                 {
-                    ngx_http_tunnel_finalize(ctx, 0);
-                    return;
+                    return NGX_OK;
                 }
 
                 if (n > 0)
@@ -218,9 +253,9 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
         {
             n = src->recv(src, b->last, size);
 
-            if (n == NGX_AGAIN || n == 0)
+            if (n == NGX_AGAIN || n == NGX_OK)
             {
-                if (n == 0)
+                if (n == NGX_OK)
                 {
                     src->read->eof = 1;
                 }
@@ -244,8 +279,7 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
 
     if ((pc->read->eof && ctx->upstream_buffer->pos == ctx->upstream_buffer->last) || (c->read->eof && ctx->client_buffer->pos == ctx->client_buffer->last) || (c->read->eof && pc->read->eof))
     {
-        ngx_http_tunnel_finalize(ctx, 0);
-        return;
+        return NGX_OK;
     }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
@@ -254,28 +288,24 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
 
     if (ngx_handle_write_event(pc->write, 0) != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     if (ngx_handle_read_event(pc->read, pc->read->eof ? NGX_CLOSE_EVENT : 0) != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     if (ngx_handle_write_event(c->write, clcf->send_lowat) != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     flags = c->read->eof ? NGX_CLOSE_EVENT : 0;
 
     if (ngx_handle_read_event(c->read, flags) != NGX_OK)
     {
-        ngx_http_tunnel_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     if (activity)
@@ -290,6 +320,8 @@ void ngx_http_tunnel_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstrea
         ngx_http_tunnel_update_idle_timer(c->write, idle_timeout);
         ngx_http_tunnel_update_idle_timer(c->read, idle_timeout);
     }
+
+    return NGX_OK;
 }
 
 void ngx_http_tunnel_release_peer(ngx_http_request_t *r, ngx_uint_t state)
