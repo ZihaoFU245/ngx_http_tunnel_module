@@ -74,7 +74,7 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
     {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
                       "tunnel idle timeout");
-        return NGX_OK;
+        return NGX_DONE;
     }
 
     activity = 0;
@@ -96,7 +96,7 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
             return rc;
         }
 
-        if (ctx->downstream_chain == NULL && !c->read->eof)
+        if (ctx->downstream_chain == NULL && !ctx->downstream_eof)
         {
             rc = ngx_http_tunnel_recv_stream_downstream(ctx, &activity);
             if (rc != NGX_OK)
@@ -143,12 +143,10 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
         break;
     }
 
-    if ((pc->read->eof && ctx->upstream_buffer->pos == ctx->upstream_buffer->last
-         && r->out == NULL && !r->buffered && !c->buffered)
-        || (c->read->eof && ctx->downstream_chain == NULL)
-        || (c->read->eof && pc->read->eof))
+    if ((pc->read->eof && ctx->upstream_buffer->pos == ctx->upstream_buffer->last && r->out == NULL && !r->buffered && !c->buffered) || (ctx->downstream_eof && pc->read->eof &&
+                                                                                                                                         ctx->downstream_chain == NULL))
     {
-        return NGX_OK;
+        return NGX_DONE;
     }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
@@ -265,7 +263,7 @@ ngx_http_tunnel_send_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 
     if (rc == NGX_ERROR)
     {
-        return NGX_OK;
+        return NGX_DONE;
     }
 
     if (b->pos == b->last && r->out == NULL && !r->buffered && !c->buffered)
@@ -302,7 +300,7 @@ ngx_http_tunnel_recv_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
         }
         else if (ctx->request_body_started)
         {
-            r->connection->read->eof = 1;
+            ctx->downstream_eof = 1;
         }
 
         return NGX_OK;
@@ -322,7 +320,7 @@ ngx_http_tunnel_recv_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
     }
     else if (rc == NGX_OK && !r->reading_body)
     {
-        r->connection->read->eof = 1;
+        ctx->downstream_eof = 1;
     }
 
     return NGX_OK;
@@ -359,7 +357,7 @@ ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
 
         if (n == NGX_ERROR)
         {
-            return NGX_OK;
+            return NGX_DONE;
         }
 
         if (n == NGX_AGAIN)

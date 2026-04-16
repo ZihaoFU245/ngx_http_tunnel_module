@@ -34,6 +34,7 @@ typedef struct
     unsigned resolving : 1;
     unsigned peer_acquired : 1;
     unsigned request_body_started : 1;
+    unsigned downstream_eof : 1;
 } ngx_http_tunnel_ctx_t;
 
 extern ngx_module_t ngx_http_tunnel_module;

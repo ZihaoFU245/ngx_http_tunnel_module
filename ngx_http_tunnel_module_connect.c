@@ -27,30 +27,13 @@ ngx_http_tunnel_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_str_t authority;
     ngx_http_upstream_resolved_t *resolved;
 
-    if (r->http_version == NGX_HTTP_VERSION_11)
-    {
-        if (r->host_start == NULL || r->host_end == NULL)
-        {
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        authority.data = r->host_start;
-        authority.len = r->host_end - r->host_start;
-    }
-    else if (r->http_version == NGX_HTTP_VERSION_20 ||
-             r->http_version == NGX_HTTP_VERSION_30)
-    {
-        if (r->headers_in.server.len == 0)
-        {
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        authority = r->headers_in.server;
-    }
-    else
+    if (r->host_start == NULL || r->host_end == NULL)
     {
         return NGX_HTTP_BAD_REQUEST;
     }
+
+    authority.data = r->host_start;
+    authority.len = r->host_end - r->host_start;
 
     ngx_memzero(&url, sizeof(ngx_url_t));
     url.url = authority;
