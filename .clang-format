@@ -1,0 +1,58 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Indentation & Tab Logic
+UseTab: Always
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+
+# Layout & Column Limit
+ColumnLimit: 80
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+
+# Braces
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterControlStatement: Never
+  AfterFunction: true        # Nginx puts function opening braces on a new line
+  BeforeElse: false          # Nginx puts 'else' on the same line as '}'
+  AfterStruct: false
+  AfterUnion: false
+  AfterEnum: false
+  SplitEmptyFunction: true
+
+# Spacing
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: false
+SpacesInParentheses: false
+SpaceBeforeAssignmentOperators: true
+
+# Alignment
+PointerAlignment: Right      # Nginx uses "char *p" style
+AlignAfterOpenBracket: Align
+AlignTrailingComments: true
+
+# Prohibit "Short" Single-Line Blocks
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# Nginx-specific Types (Helps Clang-Format parse pointers correctly)
+Typenames:
+  - ngx_int_t
+  - ngx_uint_t
+  - ngx_str_t
+  - ngx_conf_t
+  - ngx_http_request_t
+  - ngx_msec_t
+  - ngx_buf_t
+  - ngx_chain_t
+  - ngx_peer_connection_t
+  - ngx_flag_t
+
+# Cleanup
+SortIncludes: true
+...
