@@ -5,6 +5,8 @@ static ngx_int_t ngx_http_tunnel_send_stream_downstream(
     ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity);
 static ngx_int_t ngx_http_tunnel_recv_stream_downstream(
     ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity);
+static ngx_int_t ngx_http_tunnel_fill_stream_upstream_buffer(
+    ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity);
 static ngx_int_t ngx_http_tunnel_send_stream_upstream(
     ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity);
 
@@ -50,6 +52,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
     ngx_int_t rc;
     ngx_uint_t activity;
     ngx_uint_t flags;
+    ngx_uint_t upload_drained;
+    ngx_uint_t download_drained;
     ngx_buf_t *b;
     ngx_msec_t idle_timeout;
     ngx_connection_t *c;
@@ -81,7 +85,13 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 
     for (;;)
     {
-        if (ctx->downstream_chain != NULL)
+        rc = ngx_http_tunnel_fill_stream_upstream_buffer(ctx, &activity);
+        if (rc != NGX_OK)
+        {
+            return rc;
+        }
+
+        if (ctx->client_buffer->pos != ctx->client_buffer->last)
         {
             rc = ngx_http_tunnel_send_stream_upstream(ctx, &activity);
             if (rc != NGX_OK)
@@ -96,7 +106,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
             return rc;
         }
 
-        if (ctx->downstream_chain == NULL && !ctx->downstream_eof)
+        if (ctx->client_buffer->pos == ctx->client_buffer->last &&
+            ctx->downstream_chain == NULL && !ctx->downstream_eof)
         {
             rc = ngx_http_tunnel_recv_stream_downstream(ctx, &activity);
             if (rc != NGX_OK)
@@ -143,8 +154,13 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
         break;
     }
 
-    if ((pc->read->eof && ctx->upstream_buffer->pos == ctx->upstream_buffer->last && r->out == NULL && !r->buffered && !c->buffered) || (ctx->downstream_eof && pc->read->eof &&
-                                                                                                                                         ctx->downstream_chain == NULL))
+    upload_drained = (ctx->client_buffer->pos == ctx->client_buffer->last
+                      && ctx->downstream_chain == NULL);
+
+    download_drained = (ctx->upstream_buffer->pos == ctx->upstream_buffer->last
+                        && r->out == NULL && !r->buffered && !c->buffered);
+
+    if (pc->read->eof && upload_drained && download_drained)
     {
         return NGX_DONE;
     }
@@ -327,31 +343,96 @@ ngx_http_tunnel_recv_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 }
 
 static ngx_int_t
+ngx_http_tunnel_fill_stream_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
+                                            ngx_uint_t *activity)
+{
+    ngx_int_t rc;
+    size_t n;
+    ngx_buf_t *dst;
+    ngx_buf_t *src;
+    ngx_chain_t *cl;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
+    dst = ctx->client_buffer;
+
+    if (dst->pos == dst->last)
+    {
+        dst->pos = dst->start;
+        dst->last = dst->start;
+    }
+
+    while (dst->last < dst->end)
+    {
+        if (ctx->downstream_chain == NULL)
+        {
+            if (ctx->downstream_eof)
+            {
+                break;
+            }
+
+            if (r->reading_body)
+            {
+                rc = ngx_http_tunnel_recv_stream_downstream(ctx, activity);
+                if (rc != NGX_OK)
+                {
+                    return rc;
+                }
+            }
+
+            if (ctx->downstream_chain == NULL)
+            {
+                break;
+            }
+        }
+
+        cl = ctx->downstream_chain;
+        src = cl->buf;
+        n = ngx_buf_size(src);
+
+        if (n == 0)
+        {
+            ctx->downstream_chain = cl->next;
+            ngx_free_chain(r->pool, cl);
+            continue;
+        }
+
+        if (n > (size_t) (dst->end - dst->last))
+        {
+            n = dst->end - dst->last;
+        }
+
+        dst->last = ngx_cpymem(dst->last, src->pos, n);
+        src->pos += n;
+        *activity = 1;
+
+        if (ngx_buf_size(src) == 0)
+        {
+            ctx->downstream_chain = cl->next;
+            ngx_free_chain(r->pool, cl);
+        }
+    }
+
+    return NGX_OK;
+}
+
+static ngx_int_t
 ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
                                      ngx_uint_t *activity)
 {
     ssize_t n;
     size_t size;
     ngx_buf_t *b;
-    ngx_chain_t *cl;
     ngx_connection_t *pc;
     ngx_http_request_t *r;
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
+    b = ctx->client_buffer;
 
-    while (ctx->downstream_chain != NULL && pc->write->ready)
+    while (b->pos != b->last && pc->write->ready)
     {
-        cl = ctx->downstream_chain;
-        b = cl->buf;
-        size = ngx_buf_size(b);
-
-        if (size == 0)
-        {
-            ctx->downstream_chain = cl->next;
-            ngx_free_chain(r->pool, cl);
-            continue;
-        }
+        size = b->last - b->pos;
 
         n = pc->send(pc, b->pos, size);
 
@@ -370,10 +451,10 @@ ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
             b->pos += n;
             *activity = 1;
 
-            if (ngx_buf_size(b) == 0)
+            if (b->pos == b->last)
             {
-                ctx->downstream_chain = cl->next;
-                ngx_free_chain(r->pool, cl);
+                b->pos = b->start;
+                b->last = b->start;
             }
         }
     }

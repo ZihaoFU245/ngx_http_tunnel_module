@@ -181,6 +181,7 @@ ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
 {
     size_t size;
     ssize_t n;
+    ngx_uint_t buffers_drained;
     ngx_buf_t *b;
     ngx_msec_t idle_timeout;
     ngx_uint_t flags;
@@ -283,7 +284,10 @@ ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
         break;
     }
 
-    if ((pc->read->eof && ctx->upstream_buffer->pos == ctx->upstream_buffer->last) || (c->read->eof && ctx->client_buffer->pos == ctx->client_buffer->last) || (c->read->eof && pc->read->eof))
+    buffers_drained = (ctx->upstream_buffer->pos == ctx->upstream_buffer->last
+                       && ctx->client_buffer->pos == ctx->client_buffer->last);
+
+    if ((pc->read->eof || c->read->eof) && buffers_drained)
     {
         return NGX_DONE;
     }
