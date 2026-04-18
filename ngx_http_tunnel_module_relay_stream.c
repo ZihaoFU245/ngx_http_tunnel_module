@@ -114,6 +114,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 		}
 
 		if (ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
+			(ctx->padding_buffer == NULL ||
+			 ctx->padding_buffer->pos == ctx->padding_buffer->last) &&
 			r->out == NULL && !r->buffered && !c->buffered && pc->read->ready) {
 			b = ctx->upstream_buffer;
 			size = b->end - b->last;
@@ -133,7 +135,7 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 					pc->read->eof = 1;
 					pc->read->error = 1;
 					(void)ngx_connection_error(pc, ngx_socket_errno,
-									  "tunnel upstream recv() failed");
+											   "tunnel upstream recv() failed");
 				}
 			}
 		}
@@ -146,6 +148,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 
 	download_drained =
 		(ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
+		 (ctx->padding_buffer == NULL ||
+		  ctx->padding_buffer->pos == ctx->padding_buffer->last) &&
 		 r->out == NULL && !r->buffered && !c->buffered);
 
 	if (pc->read->eof && upload_drained && download_drained) {
@@ -247,6 +251,13 @@ ngx_http_tunnel_send_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 	c = r->connection;
 	b = ctx->upstream_buffer;
 
+	if (ctx->padding_negotiated) {
+		rc = ngx_http_tunnel_padding_send_downstream(ctx, activity);
+		if (rc != NGX_DECLINED) {
+			return rc;
+		}
+	}
+
 	if (b->pos == b->last && r->out == NULL && !r->buffered && !c->buffered) {
 		return NGX_OK;
 	}
@@ -329,6 +340,13 @@ ngx_http_tunnel_fill_stream_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
 
 	r = ctx->request;
 	dst = ctx->client_buffer;
+
+	if (ctx->padding_negotiated) {
+		rc = ngx_http_tunnel_padding_fill_upstream_buffer(ctx, activity);
+		if (rc != NGX_DECLINED) {
+			return rc;
+		}
+	}
 
 	if (dst->pos == dst->last) {
 		dst->pos = dst->start;

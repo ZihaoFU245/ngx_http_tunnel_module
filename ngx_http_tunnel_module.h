@@ -23,10 +23,14 @@ typedef struct {
 	ngx_http_request_t *request;
 	ngx_buf_t *client_buffer;
 	ngx_buf_t *upstream_buffer;
+	ngx_buf_t *padding_buffer;
 	ngx_chain_t *downstream_chain;
 	ngx_http_upstream_resolved_t *resolved;
 	ngx_resolver_ctx_t *resolver_ctx;
 	ngx_str_t padding_response_value;
+	u_char padding_read_header[3];
+	size_t padding_payload_rest;
+	size_t padding_discard_rest;
 	unsigned finalized : 1;
 	unsigned connected : 1;
 	unsigned waiting_connect : 1;
@@ -37,6 +41,11 @@ typedef struct {
 	unsigned downstream_eof : 1;
 	unsigned padding_negotiated : 1;
 	unsigned padding_response_ready : 1;
+	unsigned padding_output_active : 1;
+	unsigned padding_read_state : 2;
+	unsigned padding_read_header_size : 2;
+	ngx_uint_t downstream_padding_count;
+	ngx_uint_t upstream_padding_count;
 } ngx_http_tunnel_ctx_t;
 
 extern ngx_module_t ngx_http_tunnel_module;
@@ -68,6 +77,11 @@ ngx_int_t ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
 ngx_int_t
 ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
 											ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t
+ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
+											 ngx_uint_t *activity);
+ngx_int_t ngx_http_tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
+												  ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx);
 void ngx_http_tunnel_connect_handler(ngx_event_t *ev);
