@@ -129,8 +129,11 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 					b->last += n;
 					activity = 1;
 					continue;
-				} else {
+				} else if (n == NGX_ERROR) {
 					pc->read->eof = 1;
+					pc->read->error = 1;
+					(void)ngx_connection_error(pc, ngx_socket_errno,
+									  "tunnel upstream recv() failed");
 				}
 			}
 		}

@@ -254,7 +254,14 @@ ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
 				continue;
 			}
 
-			src->read->eof = 1;
+			if (n == NGX_ERROR) {
+				src->read->eof = 1;
+				src->read->error = 1;
+				(void)ngx_connection_error(src, ngx_socket_errno,
+									  from_upstream
+										  ? "tunnel upstream recv() failed"
+										  : "tunnel downstream recv() failed");
+			}
 		}
 
 		break;
