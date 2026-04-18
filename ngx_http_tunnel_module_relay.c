@@ -73,12 +73,19 @@ ngx_int_t
 ngx_http_tunnel_send_connected(ngx_http_request_t *r)
 {
 	ngx_int_t rc;
+	ngx_http_tunnel_ctx_t *ctx;
+
+	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
 
 	r->headers_out.status = NGX_HTTP_OK;
 	r->headers_out.content_length_n = -1;
 	r->headers_out.content_length = NULL;
 	ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
 	ngx_str_null(&r->headers_out.content_type);
+
+	if (ngx_http_tunnel_padding_add_response_header(r, ctx) != NGX_OK) {
+		return NGX_ERROR;
+	}
 
 	rc = ngx_http_send_header(r);
 	if (rc == NGX_ERROR || rc > NGX_OK) {
@@ -257,10 +264,10 @@ ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
 			if (n == NGX_ERROR) {
 				src->read->eof = 1;
 				src->read->error = 1;
-				(void)ngx_connection_error(src, ngx_socket_errno,
-									  from_upstream
-										  ? "tunnel upstream recv() failed"
-										  : "tunnel downstream recv() failed");
+				(void)ngx_connection_error(
+					src, ngx_socket_errno,
+					from_upstream ? "tunnel upstream recv() failed"
+								  : "tunnel downstream recv() failed");
 			}
 		}
 

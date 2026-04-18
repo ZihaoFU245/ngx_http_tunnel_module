@@ -26,6 +26,7 @@ typedef struct {
 	ngx_chain_t *downstream_chain;
 	ngx_http_upstream_resolved_t *resolved;
 	ngx_resolver_ctx_t *resolver_ctx;
+	ngx_str_t padding_response_value;
 	unsigned finalized : 1;
 	unsigned connected : 1;
 	unsigned waiting_connect : 1;
@@ -34,6 +35,8 @@ typedef struct {
 	unsigned request_body_started : 1;
 	unsigned request_body_ref_released : 1;
 	unsigned downstream_eof : 1;
+	unsigned padding_negotiated : 1;
+	unsigned padding_response_ready : 1;
 } ngx_http_tunnel_ctx_t;
 
 extern ngx_module_t ngx_http_tunnel_module;
@@ -60,6 +63,11 @@ void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx);
 ngx_int_t ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_send_connected(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_stream_downstream(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
+											ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t
+ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
+											ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx);
 void ngx_http_tunnel_connect_handler(ngx_event_t *ev);

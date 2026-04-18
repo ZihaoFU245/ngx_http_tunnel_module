@@ -163,6 +163,10 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
+	if (ngx_http_tunnel_padding_negotiate(r, ctx) != NGX_OK) {
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	}
+
 	ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
 
 	cln = ngx_http_cleanup_add(r, 0);
