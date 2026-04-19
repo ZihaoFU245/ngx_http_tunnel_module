@@ -3,7 +3,7 @@
 static ngx_int_t ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
 											 ngx_uint_t from_upstream,
 											 ngx_uint_t do_write);
-static void ngx_http_tunnel_clear_timer(ngx_event_t *ev);
+static ngx_inline void ngx_http_tunnel_clear_timer(ngx_event_t *ev);
 static void ngx_http_tunnel_update_idle_timer(ngx_event_t *ev,
 											  ngx_msec_t timeout);
 static void ngx_http_tunnel_close(ngx_http_tunnel_ctx_t *ctx);
@@ -428,7 +428,7 @@ ngx_http_tunnel_test_connect(ngx_connection_t *c)
 	return NGX_OK;
 }
 
-static void
+static ngx_inline void
 ngx_http_tunnel_clear_timer(ngx_event_t *ev)
 {
 	if (ev->timer_set) {

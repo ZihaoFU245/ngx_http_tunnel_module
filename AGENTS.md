@@ -14,5 +14,6 @@ TODO:
 - [x] Milestone 3
 - [x] Milestone 4
 - [x] Milestone 5
-- [ ] Milestone 6
-- [ ] Milestone 7
+- [x] Milestone 6
+- [x] Milestone 7
+- [x] Milestone 8

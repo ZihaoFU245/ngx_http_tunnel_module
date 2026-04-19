@@ -47,6 +47,15 @@ ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
 		return NGX_OK;
 	}
 
+	/*
+	 * Although H2/H3 share same data path,
+	 * but H3 is untested yet, so block H3 for safety.
+	 * If you need to test h3, comment out this block
+	 */
+	if (r->http_version != NGX_HTTP_VERSION_20) {
+		return NGX_OK;
+	}
+
 	if (ngx_http_tunnel_padding_present(r) != NGX_OK) {
 		return NGX_OK;
 	}
@@ -110,13 +119,6 @@ ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
 
 	return NGX_OK;
 }
-
-ngx_int_t
-ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx)
-{
-	return (ctx == NULL || ctx->padding == NULL) ? NGX_DECLINED : NGX_OK;
-}
-
 void
 ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
 {

@@ -10,10 +10,15 @@ H3 uses nginx stream, same data/logic path as H2 in this module,
 but working perfectly on H2 does not imply working perfectly
 on H3.
 
+Naive Proxy used padding scheme is implemented in here,
+works on h2 now. H3 with padding is untested, and is blocked
+for safety.
+
 - [x] HTTP/1.1 CONNECT 
 - [x] HTTP/2 CONNECT
 - [x] Non CONNECT method can co-exist with other HTTP methods
 - [x] Basic username, password authentication
+- [x] Naive Style Padding Scheme
 
 With an optimized build, nginx server during throughput
 test can maintain about ~10M memory usage. Under 50Mbps upload
@@ -21,6 +26,28 @@ and 100Mbps download speed test. It utilizes nginx existing
 network stack, integrate perfectly into nginx. Attach to
 Access Phase and Content Phase, making it obey to Access Phase
 checking, will work with limit_conn, and other security modules.
+
+This module is build and tested against nginx 1.29.8 and 1.30.*
+And likely will work with future versions.
+In latest nginx source tree, 1.31 road map, the tunnel module
+will be merged. There will then be some configuration collision,
+you can build without build in module to avoid it.
+
+I have skimmed the nginx tunnel module, it only supports HTTP/1.1,
+missing many features compared to mine.
+This module contains its own access phase handler, it does not rely
+on auth module, otherwise it will touch more nginx core. In my
+access phase handler, it designates a content phase handler,
+so putting it with nginx F5 tunnel module. My module in
+access phase will preempt it. 
+
+There are still some features that need to implement:
+
+- [ ] Connect udp
+- [ ] Padding in HTTP/3
+- [ ] Padding in HTTP/1.1
+- [ ] Check support for ipv6
+- [ ] Fully support Extended Connect
 ```
 
 ## Example Configuration file
@@ -72,12 +99,17 @@ http {
 		tunnel_auth_username username;
 		tunnel_auth_password password;
 		tunnel_probe_resistance off;        # Used when auth is used, stop sending 407
+        tunnel_padding off;                 # Opt in padding scheme for h2
+        tunnel_connect_timeout 60s;
+		tunnel_idle_timeout 30s;
 
 		location / {
 		    proxy_pass https://example.com$request_uri;
 		    proxy_set_header Host example.com;
 		    proxy_set_header X-Forwarded-Proto $scheme;
 		    proxy_set_header X-Real-IP $remote_addr;
+            proxy_ssl_server_name on;
+            proxy_ssl_name example.com;
 		}
     }
 }
@@ -113,6 +145,7 @@ Tunnel Start
     -> Clear Timer
     -> Check or enable tcp nodelay for HTTP/1.1
     -> Send 200 Connected
+        -> Add padding header if peer has support
     -> If h2 or h3, init request body
         -> Invoke nginx read client request body
         -> Attach request body post handler
@@ -123,9 +156,12 @@ Tunnel Start
         A2: Stream, H2/H3
             -> Jump Stream
 
-V1_raw
+Raw V1
     -> Invoke `ngx_http_tunnel_process_raw`
+    # Tunnel is established, only byte relay now
 
-Stream
+Stream V2/V3
     -> Invoke `ngx_http_tunnel_process_stream`
+    # Byte Relay tunnel
+    -> Padding hooked in here
 ```

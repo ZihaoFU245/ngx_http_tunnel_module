@@ -15,13 +15,6 @@ ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
 									 ngx_uint_t *activity);
 
 ngx_int_t
-ngx_http_tunnel_stream_downstream(ngx_http_request_t *r)
-{
-	return r->http_version == NGX_HTTP_VERSION_20 ||
-		   r->http_version == NGX_HTTP_VERSION_30;
-}
-
-ngx_int_t
 ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx)
 {
 	ngx_int_t rc;

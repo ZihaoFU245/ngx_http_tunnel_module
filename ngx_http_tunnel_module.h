@@ -5,9 +5,9 @@
 #include <ngx_core.h>
 #include <ngx_event_connect.h>
 #include <ngx_http.h>
-#include <ngx_http_v2.h>
 #include <ngx_http_upstream.h>
 #include <ngx_http_upstream_round_robin.h>
+#include <ngx_http_v2.h>
 
 typedef struct {
 	ngx_flag_t enable;
@@ -76,18 +76,31 @@ void ngx_http_tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx);
 
 ngx_int_t ngx_http_tunnel_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_send_connected(ngx_http_request_t *r);
-ngx_int_t ngx_http_tunnel_stream_downstream(ngx_http_request_t *r);
+
+static ngx_inline ngx_int_t
+ngx_http_tunnel_stream_downstream(ngx_http_request_t *r)
+{
+	return r->http_version == NGX_HTTP_VERSION_20 ||
+		   r->http_version == NGX_HTTP_VERSION_30;
+}
+
 ngx_int_t ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
 											ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t
 ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
-												ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx);
-void ngx_http_tunnel_padding_h2_prepend_rst_stream_data(
-	ngx_http_tunnel_ctx_t *ctx);
+											ngx_http_tunnel_ctx_t *ctx);
+
+static ngx_inline ngx_int_t
+ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx)
+{
+	return (ctx == NULL || ctx->padding == NULL) ? NGX_DECLINED : NGX_OK;
+}
+
+void
+ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t
 ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
-												 ngx_uint_t *activity);
+											 ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
 												  ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);
