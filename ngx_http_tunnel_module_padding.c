@@ -1,7 +1,5 @@
 #include "ngx_http_tunnel_module.h"
 
-#include <ngx_http_v2.h>
-
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_MIN 30
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_MAX 62
 #define NGX_HTTP_TUNNEL_FIRST_PADDINGS 8
@@ -116,16 +114,11 @@ ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
 ngx_int_t
 ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx)
 {
-	if (ctx == NULL || ctx->padding == NULL) {
-		return NGX_DECLINED;
-	}
-
-	return NGX_OK;
+	return (ctx == NULL || ctx->padding == NULL) ? NGX_DECLINED : NGX_OK;
 }
 
 void
-ngx_http_tunnel_padding_h2_prepend_rst_stream_data(
-	ngx_http_tunnel_ctx_t *ctx)
+ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
 {
 	ngx_http_request_t *r;
 
@@ -200,7 +193,6 @@ ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
 					   src->pos, n);
 			src->pos += n;
 			padding->read_header_size += n;
-			*activity = 1;
 
 			if (padding->read_header_size != sizeof(padding->read_header)) {
 				continue;
@@ -240,7 +232,6 @@ ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
 			dst->last = ngx_cpymem(dst->last, src->pos, n);
 			src->pos += n;
 			padding->payload_rest -= n;
-			*activity = 1;
 
 			if (padding->payload_rest != 0) {
 				if (dst->last == dst->end) {
@@ -262,7 +253,6 @@ ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
 			n = ngx_min((size_t)ngx_buf_size(src), padding->discard_rest);
 			src->pos += n;
 			padding->discard_rest -= n;
-			*activity = 1;
 
 			if (padding->discard_rest == 0) {
 				ngx_http_tunnel_padding_complete_downstream_frame(ctx,
@@ -347,7 +337,6 @@ ngx_http_tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
 	}
 
 	if (rc == NGX_OK || rc == NGX_AGAIN) {
-		*activity = 1;
 		return NGX_OK;
 	}
 
@@ -612,12 +601,16 @@ ngx_http_tunnel_padding_queue_h2_rst_stream_data(ngx_http_request_t *r)
 	frame->stream = stream;
 	frame->length = frame_size;
 	frame->blocked = 0;
-	frame->fin = 0;
+	frame->fin = 1;
 
 	ngx_http_v2_queue_frame(h2c, frame);
 	h2c->send_window -= frame_size;
 	stream->send_window -= frame_size;
 	stream->queued++;
+
+	if (ngx_http_v2_send_output_queue(h2c) == NGX_ERROR) {
+		return NGX_ERROR;
+	}
 
 	return NGX_OK;
 }
@@ -662,6 +655,10 @@ ngx_http_tunnel_padding_h2_rst_stream_data_handler(
 	r->header_size += NGX_HTTP_V2_FRAME_HEADER_SIZE;
 	h2c->total_bytes += NGX_HTTP_V2_FRAME_HEADER_SIZE + frame->length;
 	h2c->payload_bytes += frame->length;
+
+	if (frame->fin) {
+		stream->out_closed = 1;
+	}
 
 	frame->next = stream->free_frames;
 	stream->free_frames = frame;

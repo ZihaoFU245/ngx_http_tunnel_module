@@ -5,6 +5,7 @@
 #include <ngx_core.h>
 #include <ngx_event_connect.h>
 #include <ngx_http.h>
+#include <ngx_http_v2.h>
 #include <ngx_http_upstream.h>
 #include <ngx_http_upstream_round_robin.h>
 
