@@ -114,8 +114,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 		}
 
 		if (ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
-			(ctx->padding_buffer == NULL ||
-			 ctx->padding_buffer->pos == ctx->padding_buffer->last) &&
+			(ctx->padding == NULL ||
+			 ctx->padding->buffer->pos == ctx->padding->buffer->last) &&
 			r->out == NULL && !r->buffered && !c->buffered && pc->read->ready) {
 			b = ctx->upstream_buffer;
 			size = b->end - b->last;
@@ -148,8 +148,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 
 	download_drained =
 		(ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
-		 (ctx->padding_buffer == NULL ||
-		  ctx->padding_buffer->pos == ctx->padding_buffer->last) &&
+		 (ctx->padding == NULL ||
+		  ctx->padding->buffer->pos == ctx->padding->buffer->last) &&
 		 r->out == NULL && !r->buffered && !c->buffered);
 
 	if (pc->read->eof && upload_drained && download_drained) {
@@ -251,7 +251,7 @@ ngx_http_tunnel_send_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 	c = r->connection;
 	b = ctx->upstream_buffer;
 
-	if (ctx->padding_negotiated) {
+	if (ngx_http_tunnel_padding_active(ctx) == NGX_OK) {
 		rc = ngx_http_tunnel_padding_send_downstream(ctx, activity);
 		if (rc != NGX_DECLINED) {
 			return rc;
@@ -341,7 +341,7 @@ ngx_http_tunnel_fill_stream_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
 	r = ctx->request;
 	dst = ctx->client_buffer;
 
-	if (ctx->padding_negotiated) {
+	if (ngx_http_tunnel_padding_active(ctx) == NGX_OK) {
 		rc = ngx_http_tunnel_padding_fill_upstream_buffer(ctx, activity);
 		if (rc != NGX_DECLINED) {
 			return rc;
