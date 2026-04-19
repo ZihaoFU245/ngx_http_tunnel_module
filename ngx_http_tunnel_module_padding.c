@@ -1,5 +1,7 @@
 #include "ngx_http_tunnel_module.h"
 
+#include <ngx_http_v2.h>
+
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_MIN 30
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_MAX 62
 #define NGX_HTTP_TUNNEL_FIRST_PADDINGS 8
@@ -7,6 +9,8 @@
 #define NGX_HTTP_TUNNEL_FNV1A_OFFSET_BASIS 14695981039346656037ULL
 #define NGX_HTTP_TUNNEL_FNV1A_PRIME 1099511628211ULL
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_RETRY_MAX 5
+#define NGX_HTTP_TUNNEL_RST_STREAM_DATA_MIN 48
+#define NGX_HTTP_TUNNEL_RST_STREAM_DATA_MAX 72
 
 #define NGX_HTTP_TUNNEL_PADDING_READ_HEADER 0
 #define NGX_HTTP_TUNNEL_PADDING_READ_PAYLOAD 1
@@ -24,6 +28,12 @@ ngx_http_tunnel_padding_complete_downstream_frame(ngx_http_tunnel_ctx_t *ctx,
 												  ngx_uint_t *activity);
 static ngx_int_t
 ngx_http_tunnel_padding_build_output_frame(ngx_http_tunnel_ctx_t *ctx);
+static ngx_int_t
+ngx_http_tunnel_padding_queue_h2_rst_stream_data(ngx_http_request_t *r);
+static ngx_int_t
+ngx_http_tunnel_padding_h2_send_rst_stream_precheck(ngx_http_request_t *r);
+static ngx_int_t ngx_http_tunnel_padding_h2_rst_stream_data_handler(
+	ngx_http_v2_connection_t *h2c, ngx_http_v2_out_frame_t *frame);
 
 ngx_int_t
 ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
@@ -111,6 +121,27 @@ ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx)
 	}
 
 	return NGX_OK;
+}
+
+void
+ngx_http_tunnel_padding_h2_prepend_rst_stream_data(
+	ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_http_request_t *r;
+
+	if (ngx_http_tunnel_padding_active(ctx) == NGX_DECLINED) {
+		return;
+	}
+
+	r = ctx->request;
+
+	if (r->http_version != NGX_HTTP_VERSION_20 || r->stream == NULL ||
+		!ctx->connected ||
+		ngx_http_tunnel_padding_h2_send_rst_stream_precheck(r) != NGX_OK) {
+		return;
+	}
+
+	(void)ngx_http_tunnel_padding_queue_h2_rst_stream_data(r);
 }
 
 ngx_int_t
@@ -506,6 +537,146 @@ ngx_http_tunnel_padding_build_output_frame(ngx_http_tunnel_ctx_t *ctx)
 	}
 
 	padding->output_active = 1;
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_tunnel_padding_queue_h2_rst_stream_data(ngx_http_request_t *r)
+{
+	u_char *p;
+	size_t frame_size;
+	size_t total_size;
+	ngx_buf_t *b;
+	ngx_chain_t *cl;
+	ngx_http_v2_stream_t *stream;
+	ngx_http_v2_connection_t *h2c;
+	ngx_http_v2_out_frame_t *frame;
+
+	stream = r->stream;
+	h2c = stream->connection;
+
+	if (stream->out_closed || stream->rst_sent || h2c->connection->error) {
+		return NGX_DECLINED;
+	}
+
+	total_size = NGX_HTTP_TUNNEL_RST_STREAM_DATA_MIN +
+				 (ngx_random() % (NGX_HTTP_TUNNEL_RST_STREAM_DATA_MAX -
+								  NGX_HTTP_TUNNEL_RST_STREAM_DATA_MIN + 1));
+	frame_size = total_size - NGX_HTTP_V2_FRAME_HEADER_SIZE;
+
+	if (frame_size < 2 || frame_size - 1 > 255) {
+		return NGX_DECLINED;
+	}
+
+	if (h2c->send_window < frame_size ||
+		stream->send_window < (ssize_t)frame_size) {
+		return NGX_DECLINED;
+	}
+
+	frame = ngx_pcalloc(r->pool, sizeof(ngx_http_v2_out_frame_t));
+	if (frame == NULL) {
+		return NGX_ERROR;
+	}
+
+	cl = ngx_alloc_chain_link(r->pool);
+	if (cl == NULL) {
+		return NGX_ERROR;
+	}
+
+	b = ngx_create_temp_buf(r->pool, total_size);
+	if (b == NULL) {
+		return NGX_ERROR;
+	}
+
+	b->tag = (ngx_buf_tag_t)&ngx_http_v2_module;
+	b->memory = 1;
+	b->flush = 1;
+	b->last_buf = 1;
+
+	p = b->last;
+	p = ngx_http_v2_write_len_and_type(p, frame_size, NGX_HTTP_V2_DATA_FRAME);
+	*p++ = NGX_HTTP_V2_END_STREAM_FLAG | NGX_HTTP_V2_PADDED_FLAG;
+	p = ngx_http_v2_write_sid(p, stream->node->id);
+	*p++ = (u_char)(frame_size - 1);
+	ngx_memzero(p, frame_size - 1);
+	p += frame_size - 1;
+	b->last = p;
+
+	cl->buf = b;
+	cl->next = NULL;
+
+	frame->first = cl;
+	frame->last = cl;
+	frame->handler = ngx_http_tunnel_padding_h2_rst_stream_data_handler;
+	frame->stream = stream;
+	frame->length = frame_size;
+	frame->blocked = 0;
+	frame->fin = 0;
+
+	ngx_http_v2_queue_frame(h2c, frame);
+	h2c->send_window -= frame_size;
+	stream->send_window -= frame_size;
+	stream->queued++;
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_tunnel_padding_h2_send_rst_stream_precheck(ngx_http_request_t *r)
+{
+	ngx_http_v2_stream_t *stream;
+	ngx_http_v2_connection_t *h2c;
+
+	stream = r->stream;
+	h2c = stream->connection;
+
+	if (stream->rst_sent || h2c->connection->error) {
+		return NGX_DECLINED;
+	}
+
+	if (!stream->out_closed) {
+		return NGX_OK;
+	}
+
+	return NGX_DECLINED;
+}
+
+static ngx_int_t
+ngx_http_tunnel_padding_h2_rst_stream_data_handler(
+	ngx_http_v2_connection_t *h2c, ngx_http_v2_out_frame_t *frame)
+{
+	ngx_connection_t *fc;
+	ngx_event_t *wev;
+	ngx_http_request_t *r;
+	ngx_http_v2_stream_t *stream;
+
+	if (frame->first->buf->pos != frame->first->buf->last) {
+		return NGX_AGAIN;
+	}
+
+	stream = frame->stream;
+	r = stream->request;
+
+	r->connection->sent += NGX_HTTP_V2_FRAME_HEADER_SIZE + frame->length;
+	r->header_size += NGX_HTTP_V2_FRAME_HEADER_SIZE;
+	h2c->total_bytes += NGX_HTTP_V2_FRAME_HEADER_SIZE + frame->length;
+	h2c->payload_bytes += frame->length;
+
+	frame->next = stream->free_frames;
+	stream->free_frames = frame;
+	stream->queued--;
+
+	if (!stream->waiting && !stream->blocked) {
+		fc = r->connection;
+		wev = fc->write;
+		wev->active = 0;
+		wev->ready = 1;
+
+		if (fc->error || !wev->delayed) {
+			ngx_post_event(wev, &ngx_posted_events);
+		}
+	}
 
 	return NGX_OK;
 }

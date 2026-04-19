@@ -80,11 +80,13 @@ ngx_int_t ngx_http_tunnel_padding_negotiate(ngx_http_request_t *r,
 											ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t
 ngx_http_tunnel_padding_add_response_header(ngx_http_request_t *r,
-											ngx_http_tunnel_ctx_t *ctx);
+												ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx);
+void ngx_http_tunnel_padding_h2_prepend_rst_stream_data(
+	ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t
 ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
-											 ngx_uint_t *activity);
+												 ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
 												  ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);

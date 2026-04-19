@@ -365,6 +365,8 @@ ngx_http_tunnel_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 		ctx->resolving = 0;
 	}
 
+	ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ctx);
+
 	ngx_http_tunnel_close(ctx);
 
 	ngx_http_finalize_request(r, rc);
