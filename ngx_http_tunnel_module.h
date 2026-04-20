@@ -55,6 +55,27 @@ typedef struct {
 	unsigned downstream_eof : 1;
 } ngx_http_tunnel_ctx_t;
 
+static ngx_inline void
+ngx_http_tunnel_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_http_request_t *r;
+
+	if (ctx == NULL || !ctx->request_body_started ||
+		ctx->request_body_ref_released) {
+		return;
+	}
+
+	ctx->request_body_ref_released = 1;
+	r = ctx->request;
+
+	/*
+	 * ngx_http_read_client_request_body() adds an async main request
+	 * reference. Release it once, either from the post handler or on
+	 * tunnel finalize/cleanup if the post handler is not reached.
+	 */
+	r->main->count--;
+}
+
 extern ngx_module_t ngx_http_tunnel_module;
 
 char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);

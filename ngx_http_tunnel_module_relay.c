@@ -96,6 +96,13 @@ ngx_http_tunnel_send_connected(ngx_http_request_t *r)
 		return NGX_ERROR;
 	}
 
+	/*
+	 * CONNECT sends only headers plus an initial flush before switching to raw
+	 * tunnel relay, so nginx's normal last-buffer path never marks the response
+	 * as sent. HTTP/3 cleanup treats that as an aborted stream and resets it.
+	 */
+	r->response_sent = 1;
+
 	return NGX_OK;
 }
 
@@ -264,10 +271,6 @@ ngx_http_tunnel_process_raw(ngx_http_tunnel_ctx_t *ctx,
 			if (n == NGX_ERROR) {
 				src->read->eof = 1;
 				src->read->error = 1;
-				(void)ngx_connection_error(
-					src, ngx_socket_errno,
-					from_upstream ? "tunnel upstream recv() failed"
-								  : "tunnel downstream recv() failed");
 			}
 		}
 
@@ -356,7 +359,6 @@ ngx_http_tunnel_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 		 * closing the whole HTTP/3 connection when that send fails.
 		 */
 		r->connection->read->eof = 1;
-		r->reading_body = 0;
 	}
 
 	if (ctx->resolving && ctx->resolver_ctx != NULL) {
@@ -364,6 +366,8 @@ ngx_http_tunnel_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 		ctx->resolver_ctx = NULL;
 		ctx->resolving = 0;
 	}
+
+	ngx_http_tunnel_release_request_body_ref(ctx);
 
 	ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ctx);
 
@@ -389,6 +393,8 @@ ngx_http_tunnel_cleanup(void *data)
 		ctx->resolver_ctx = NULL;
 		ctx->resolving = 0;
 	}
+
+	ngx_http_tunnel_release_request_body_ref(ctx);
 
 	ngx_http_tunnel_close(ctx);
 }

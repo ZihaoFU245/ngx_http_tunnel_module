@@ -146,8 +146,6 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 				} else if (n == NGX_ERROR) {
 					pc->read->eof = 1;
 					pc->read->error = 1;
-					(void)ngx_connection_error(pc, ngx_socket_errno,
-											   "tunnel upstream recv() failed");
 				}
 			}
 		}
@@ -169,7 +167,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 		 ngx_http_tunnel_stream_padding_drained(ctx) &&
 		 ngx_http_tunnel_stream_output_idle(r, c));
 
-	if (pc->read->eof && upload_drained && download_drained) {
+	if ((pc->read->eof || ctx->downstream_eof) && upload_drained &&
+		download_drained) {
 		return NGX_DONE;
 	}
 
@@ -334,17 +333,7 @@ ngx_http_tunnel_request_body_post_handler(ngx_http_request_t *r)
 	ngx_http_tunnel_ctx_t *ctx;
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
-
-	if (ctx != NULL && !ctx->request_body_ref_released) {
-		ctx->request_body_ref_released = 1;
-
-		/*
-		 * The tunnel already holds its own async reference from the content
-		 * handler, so release the extra reference acquired by
-		 * ngx_http_read_client_request_body().
-		 */
-		r->main->count--;
-	}
+	ngx_http_tunnel_release_request_body_ref(ctx);
 
 	return;
 }
