@@ -24,11 +24,10 @@ ngx_http_tunnel_access_denied(ngx_http_request_t *r,
 {
 	if (tscf->probe_resistance) {
 		ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
-
 		if (h == NULL) {
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
-		
+
 		h->hash = 1;
 		h->next = NULL;
 		ngx_str_set(&h->key, "Allow");
