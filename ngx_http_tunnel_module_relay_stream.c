@@ -15,6 +15,13 @@ ngx_http_tunnel_stream_recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t
 ngx_http_tunnel_stream_recv_downstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t
+ngx_http_tunnel_stream_upload_padding_active(ngx_http_tunnel_ctx_t *ctx);
+static void ngx_http_tunnel_stream_free_consumed_downstream_chain(
+	ngx_http_request_t *r, ngx_chain_t **chain, ngx_chain_t *limit);
+static ngx_int_t
+ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
+									 ngx_uint_t *activity);
+static ngx_inline ngx_uint_t
 ngx_http_tunnel_stream_local_work_pending(ngx_http_tunnel_ctx_t *ctx);
 static ngx_int_t
 ngx_http_tunnel_send_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
@@ -22,12 +29,6 @@ ngx_http_tunnel_send_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 static ngx_int_t
 ngx_http_tunnel_recv_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 									   ngx_uint_t *activity);
-static ngx_int_t
-ngx_http_tunnel_fill_stream_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
-											ngx_uint_t *activity);
-static ngx_int_t
-ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
-									 ngx_uint_t *activity);
 
 ngx_int_t
 ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx)
@@ -109,12 +110,8 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 			}
 		}
 
-		rc = ngx_http_tunnel_fill_stream_upstream_buffer(ctx, &loop_activity);
-		if (rc != NGX_OK) {
-			return rc;
-		}
-
-		if (ctx->client_buffer->pos != ctx->client_buffer->last) {
+		if (ctx->downstream_chain != NULL ||
+			ngx_http_tunnel_stream_upload_padding_active(ctx)) {
 			rc = ngx_http_tunnel_send_stream_upstream(ctx, &loop_activity);
 			if (rc != NGX_OK) {
 				return rc;
@@ -165,8 +162,7 @@ ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx)
 		budget_exhausted = 0;
 	}
 
-	upload_drained = (ctx->client_buffer->pos == ctx->client_buffer->last &&
-					  ctx->downstream_chain == NULL);
+	upload_drained = (ctx->downstream_chain == NULL);
 
 	download_drained =
 		(ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
@@ -280,8 +276,29 @@ ngx_http_tunnel_stream_recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx)
 static ngx_inline ngx_uint_t
 ngx_http_tunnel_stream_recv_downstream_precheck(ngx_http_tunnel_ctx_t *ctx)
 {
-	return ctx->client_buffer->pos == ctx->client_buffer->last &&
-		   ctx->downstream_chain == NULL && !ctx->downstream_eof;
+	return ctx->downstream_chain == NULL && !ctx->downstream_eof;
+}
+
+static ngx_inline ngx_uint_t
+ngx_http_tunnel_stream_upload_padding_active(ngx_http_tunnel_ctx_t *ctx)
+{
+	return ctx->padding != NULL &&
+		   ctx->padding->downstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS;
+}
+
+static void
+ngx_http_tunnel_stream_free_consumed_downstream_chain(ngx_http_request_t *r,
+													  ngx_chain_t **chain,
+													  ngx_chain_t *limit)
+{
+	ngx_chain_t *cl;
+
+	while (*chain != limit && *chain != NULL &&
+		   ngx_buf_size((*chain)->buf) == 0) {
+		cl = *chain;
+		*chain = cl->next;
+		ngx_free_chain(r->pool, cl);
+	}
 }
 
 static ngx_inline ngx_uint_t
@@ -293,8 +310,7 @@ ngx_http_tunnel_stream_local_work_pending(ngx_http_tunnel_ctx_t *ctx)
 	r = ctx->request;
 	c = r->connection;
 
-	if (ctx->client_buffer->pos != ctx->client_buffer->last ||
-		ctx->downstream_chain != NULL ||
+	if (ctx->downstream_chain != NULL ||
 		ctx->upstream_buffer->pos != ctx->upstream_buffer->last) {
 		return 1;
 	}
@@ -440,110 +456,41 @@ ngx_http_tunnel_recv_stream_downstream(ngx_http_tunnel_ctx_t *ctx,
 }
 
 static ngx_int_t
-ngx_http_tunnel_fill_stream_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
-											ngx_uint_t *activity)
-{
-	ngx_int_t rc;
-	size_t n;
-	ngx_chain_t *free;
-	ngx_chain_t *next;
-	ngx_buf_t *dst;
-	ngx_buf_t *src;
-	ngx_chain_t *cl;
-	ngx_http_request_t *r;
-
-	r = ctx->request;
-	dst = ctx->client_buffer;
-	free = NULL;
-
-	if (ngx_http_tunnel_padding_active(ctx) == NGX_OK) {
-		rc = ngx_http_tunnel_padding_fill_upstream_buffer(ctx, activity);
-		if (rc != NGX_DECLINED) {
-			return rc;
-		}
-	}
-
-	if (dst->pos == dst->last) {
-		dst->pos = dst->start;
-		dst->last = dst->start;
-	}
-
-	while (dst->last < dst->end) {
-		if (ctx->downstream_chain == NULL) {
-			break;
-		}
-
-		cl = ctx->downstream_chain;
-		src = cl->buf;
-		n = ngx_buf_size(src);
-
-		if (n == 0) {
-			ctx->downstream_chain = cl->next;
-			cl->next = free;
-			free = cl;
-			continue;
-		}
-
-		if (n > (size_t)(dst->end - dst->last)) {
-			n = dst->end - dst->last;
-		}
-
-		dst->last = ngx_cpymem(dst->last, src->pos, n);
-		src->pos += n;
-		*activity = 1;
-
-		if (ngx_buf_size(src) == 0) {
-			ctx->downstream_chain = cl->next;
-			cl->next = free;
-			free = cl;
-		}
-	}
-
-	while (free != NULL) {
-		next = free->next;
-		ngx_free_chain(r->pool, free);
-		free = next;
-	}
-
-	return NGX_OK;
-}
-
-static ngx_int_t
 ngx_http_tunnel_send_stream_upstream(ngx_http_tunnel_ctx_t *ctx,
 									 ngx_uint_t *activity)
 {
-	ssize_t n;
-	size_t size;
-	ngx_buf_t *b;
+	off_t before_sent;
+	ngx_chain_t *chain;
+	ngx_chain_t *out;
 	ngx_connection_t *pc;
 	ngx_http_request_t *r;
 
 	r = ctx->request;
 	pc = r->upstream->peer.connection;
-	b = ctx->client_buffer;
+	ngx_http_tunnel_stream_free_consumed_downstream_chain(
+		r, &ctx->downstream_chain, NULL);
 
-	while (b->pos != b->last && pc->write->ready) {
-		size = b->last - b->pos;
+	if (ngx_http_tunnel_stream_upload_padding_active(ctx)) {
+		return ngx_http_tunnel_padding_send_upstream(ctx, activity);
+	}
 
-		n = pc->send(pc, b->pos, size);
+	if (!pc->write->ready || ctx->downstream_chain == NULL) {
+		return NGX_OK;
+	}
 
-		if (n == NGX_ERROR) {
-			return NGX_DONE;
-		}
+	chain = ctx->downstream_chain;
+	before_sent = pc->sent;
+	out = pc->send_chain(pc, chain, 0);
 
-		if (n == NGX_AGAIN) {
-			break;
-		}
+	if (out == NGX_CHAIN_ERROR) {
+		return NGX_DONE;
+	}
 
-		if (n > 0) {
-			b->pos += n;
-			*activity = 1;
+	ngx_http_tunnel_stream_free_consumed_downstream_chain(r, &chain, out);
+	ctx->downstream_chain = chain;
 
-			if (b->pos == b->last) {
-				b->pos = b->start;
-				b->last = b->start;
-			}
-		}
+	if (pc->sent != before_sent) {
+		*activity = 1;
 	}
 
 	return NGX_OK;

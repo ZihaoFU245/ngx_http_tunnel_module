@@ -9,6 +9,8 @@
 #include <ngx_http_upstream_round_robin.h>
 #include <ngx_http_v2.h>
 
+#define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
+
 typedef struct {
 	ngx_flag_t enable;
 	ngx_str_t auth_username;
@@ -99,10 +101,10 @@ ngx_http_tunnel_padding_active(ngx_http_tunnel_ctx_t *ctx)
 void
 ngx_http_tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t
-ngx_http_tunnel_padding_fill_upstream_buffer(ngx_http_tunnel_ctx_t *ctx,
-											 ngx_uint_t *activity);
+ngx_http_tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx,
+									 ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
-												  ngx_uint_t *activity);
+											  ngx_uint_t *activity);
 ngx_int_t ngx_http_tunnel_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t ngx_http_tunnel_process_stream(ngx_http_tunnel_ctx_t *ctx);
 void ngx_http_tunnel_connect_handler(ngx_event_t *ev);
