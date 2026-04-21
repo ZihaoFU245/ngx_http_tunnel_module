@@ -49,6 +49,8 @@ typedef struct {
 	unsigned connected : 1;
 	unsigned cleanup_added : 1;
 	unsigned request_body_started : 1;
+	unsigned request_body_ref_acquired : 1;
+	unsigned request_body_ref_released : 1;
 	unsigned downstream_eof : 1;
 } ngx_http_tunnel_ctx_t;
 
@@ -70,15 +72,21 @@ ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
 	ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_parse_target(ngx_http_request_t *r,
 	ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_connect_create_request(ngx_http_request_t *r);
-ngx_int_t tunnel_connect_reinit_request(ngx_http_request_t *r);
+ngx_int_t tunnel_connect_empty_request(ngx_http_request_t *r);
 ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
 void tunnel_connect_abort_request(ngx_http_request_t *r);
 void tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
 
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r);
-ngx_int_t tunnel_relay_is_stream_downstream(ngx_http_request_t *r);
+
+static ngx_inline ngx_uint_t
+tunnel_relay_is_stream_downstream(ngx_http_request_t *r)
+{
+	return r->http_version == NGX_HTTP_VERSION_20 ||
+		   r->http_version == NGX_HTTP_VERSION_30;
+}
+
 ngx_int_t tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx);
 
@@ -111,6 +119,7 @@ void tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 void tunnel_relay_cleanup(void *data);
 void tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx);
 
+void tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx);
 void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,

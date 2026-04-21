@@ -193,8 +193,8 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 
 	u = r->upstream;
 	u->conf = &tscf->upstream;
-	u->create_request = tunnel_connect_create_request;
-	u->reinit_request = tunnel_connect_reinit_request;
+	u->create_request = tunnel_connect_empty_request;
+	u->reinit_request = tunnel_connect_empty_request;
 	u->process_header = tunnel_connect_process_header;
 	u->abort_request = tunnel_connect_abort_request;
 	u->finalize_request = tunnel_connect_finalize_request;

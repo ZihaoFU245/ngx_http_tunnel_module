@@ -37,14 +37,15 @@ tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx)
 	}
 
 	r->request_body_no_buffering = 1;
+	ctx->request_body_started = 1;
+	ctx->request_body_ref_acquired = 1;
 
 	rc = ngx_http_read_client_request_body(
 		r, tunnel_relay_v2_request_body_post_handler);
 	if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+		ctx->request_body_ref_acquired = 0;
 		return rc;
 	}
-
-	ctx->request_body_started = 1;
 
 	return NGX_OK;
 }
@@ -253,13 +254,6 @@ tunnel_relay_v2_upload_padding_active(ngx_http_tunnel_ctx_t *ctx)
 static void
 tunnel_relay_v2_request_body_post_handler(ngx_http_request_t *r)
 {
-	ngx_http_tunnel_ctx_t *ctx;
-
-	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
-	if (ctx != NULL && ctx->connected) {
-		tunnel_relay_process(ctx, 0, 1);
-	}
-
 	return;
 }
 
@@ -348,6 +342,7 @@ tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
 			*activity = 1;
 		} else if (ctx->request_body_started) {
 			ctx->downstream_eof = 1;
+			tunnel_utils_release_request_body_ref(ctx);
 		}
 
 		return NGX_OK;
@@ -364,6 +359,7 @@ tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
 		*activity = 1;
 	} else if (rc == NGX_OK && !r->reading_body) {
 		ctx->downstream_eof = 1;
+		tunnel_utils_release_request_body_ref(ctx);
 	}
 
 	return NGX_OK;

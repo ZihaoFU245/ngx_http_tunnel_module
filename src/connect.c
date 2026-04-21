@@ -60,13 +60,7 @@ tunnel_connect_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 }
 
 ngx_int_t
-tunnel_connect_create_request(ngx_http_request_t *r)
-{
-	return NGX_OK;
-}
-
-ngx_int_t
-tunnel_connect_reinit_request(ngx_http_request_t *r)
+tunnel_connect_empty_request(ngx_http_request_t *r)
 {
 	return NGX_OK;
 }
@@ -102,6 +96,10 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 	 * stream-aware relay while upstream keeps ownership of peer setup.
 	 */
 	rc = tunnel_relay_start(ctx);
+	if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+		tunnel_relay_finalize(ctx, rc);
+		return NGX_DONE;
+	}
 
 	return (rc == NGX_OK) ? NGX_DONE : NGX_ERROR;
 }

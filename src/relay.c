@@ -20,7 +20,6 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 	tunnel_utils_clear_timer(pc->read);
 	tunnel_utils_clear_timer(pc->write);
 
-	ctx->connected = 1;
 	r->keepalive = 0;
 	c->log->action = "tunneling connection";
 
@@ -59,6 +58,8 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 		ctx->cleanup_added = 1;
 	}
 
+	ctx->connected = 1;
+
 	tunnel_utils_update_idle_timer(pc->write, tscf->idle_timeout);
 	tunnel_utils_update_idle_timer(pc->read, tscf->idle_timeout);
 	tunnel_utils_update_idle_timer(c->write, tscf->idle_timeout);
@@ -73,13 +74,6 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 	tunnel_relay_process(ctx, 0, 1);
 
 	return NGX_OK;
-}
-
-ngx_int_t
-tunnel_relay_is_stream_downstream(ngx_http_request_t *r)
-{
-	return r->http_version == NGX_HTTP_VERSION_20 ||
-		   r->http_version == NGX_HTTP_VERSION_30;
 }
 
 ngx_int_t
