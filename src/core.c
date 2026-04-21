@@ -109,7 +109,7 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 		return NGX_DECLINED;
 	}
 
-	rc = ngx_http_tunnel_check_auth(r, tscf);
+	rc = tunnel_auth_check(r, tscf);
 	if (rc != NGX_OK) {
 		return rc;
 	}
@@ -163,7 +163,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	if (ngx_http_tunnel_padding_negotiate(r, ctx) != NGX_OK) {
+	if (tunnel_padding_negotiate(r, ctx) != NGX_OK) {
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
@@ -174,14 +174,14 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	cln->handler = ngx_http_tunnel_cleanup;
+	cln->handler = tunnel_relay_cleanup;
 	cln->data = ctx;
 
-	if (ngx_http_tunnel_init_upstream_peer(r, ctx) != NGX_OK) {
+	if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	rc = ngx_http_tunnel_parse_target(r, ctx);
+	rc = tunnel_connect_parse_target(r, ctx);
 	if (rc != NGX_OK) {
 		return rc;
 	}
@@ -195,9 +195,9 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
 		}
 
-		rc = ngx_http_tunnel_connect_next(ctx);
+		rc = tunnel_connect_next(ctx);
 		if (rc != NGX_OK) {
-			ngx_http_tunnel_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
+			tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
 											  ? rc
 											  : NGX_HTTP_BAD_GATEWAY);
 		}
@@ -226,7 +226,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 
 		ctx->resolving = 1;
 		ctx->resolver_ctx->name = ctx->resolved->host;
-		ctx->resolver_ctx->handler = ngx_http_tunnel_resolve_handler;
+		ctx->resolver_ctx->handler = tunnel_resolve_handler;
 		ctx->resolver_ctx->data = ctx;
 		ctx->resolver_ctx->timeout = clcf->resolver_timeout;
 
