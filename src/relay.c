@@ -5,6 +5,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 {
 	ngx_connection_t *c;
 	ngx_connection_t *pc;
+	ngx_http_cleanup_t *cln;
 	ngx_int_t rc;
 	ngx_http_request_t *r;
 	ngx_http_upstream_t *u;
@@ -19,7 +20,6 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 	tunnel_utils_clear_timer(pc->read);
 	tunnel_utils_clear_timer(pc->write);
 
-	ctx->waiting_connect = 0;
 	ctx->connected = 1;
 	r->keepalive = 0;
 	c->log->action = "tunneling connection";
@@ -31,21 +31,9 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 		if (ngx_tcp_nodelay(pc) != NGX_OK) {
 			return NGX_ERROR;
 		}
-
-		if (!tunnel_relay_is_stream_downstream(r) &&
-			ngx_tcp_nodelay(c) != NGX_OK) {
-			return NGX_ERROR;
-		}
 	}
 
-	if (r->http_version == NGX_HTTP_VERSION_20) {
-		rc = tunnel_relay_v2_init_request_body(ctx);
-	} else if (r->http_version == NGX_HTTP_VERSION_30) {
-		rc = tunnel_relay_v3_init_request_body(ctx);
-	} else {
-		rc = NGX_OK;
-	}
-
+	rc = tunnel_relay_v2_init_request_body(ctx);
 	if (rc != NGX_OK) {
 		return rc;
 	}
@@ -58,6 +46,18 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 	pc->write->handler = tunnel_relay_upstream_write_handler;
 	r->read_event_handler = tunnel_relay_downstream_read_handler;
 	r->write_event_handler = tunnel_relay_downstream_write_handler;
+	pc->data = ctx;
+
+	if (!ctx->cleanup_added) {
+		cln = ngx_http_cleanup_add(r, 0);
+		if (cln == NULL) {
+			return NGX_ERROR;
+		}
+
+		cln->handler = tunnel_relay_cleanup;
+		cln->data = ctx;
+		ctx->cleanup_added = 1;
+	}
 
 	tunnel_utils_update_idle_timer(pc->write, tscf->idle_timeout);
 	tunnel_utils_update_idle_timer(pc->read, tscf->idle_timeout);
@@ -177,13 +177,15 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
 {
 	ngx_int_t rc;
 
-	if (ctx->request->http_version == NGX_HTTP_VERSION_20) {
-		rc = tunnel_relay_v2_process(ctx);
-	} else if (ctx->request->http_version == NGX_HTTP_VERSION_30) {
-		rc = tunnel_relay_v3_process(ctx);
-	} else {
-		rc = tunnel_relay_v1_process(ctx, from_upstream, do_write);
-	}
+	(void)from_upstream;
+	(void)do_write;
+
+	/*
+	 * HTTP/3 uses the same stream-body abstraction as HTTP/2 here:
+	 * request-body chains for upload and the HTTP output filter for
+	 * download. Protocol-specific differences stay below nginx core.
+	 */
+	rc = tunnel_relay_v2_process(ctx);
 
 	if (rc == NGX_DONE) {
 		tunnel_relay_finalize(ctx, NGX_OK);
@@ -193,22 +195,6 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
 	if (rc != NGX_OK) {
 		tunnel_relay_finalize(ctx, rc);
 	}
-}
-
-void
-tunnel_upstream_release_peer(ngx_http_request_t *r, ngx_uint_t state)
-{
-	ngx_http_upstream_t *u;
-
-	u = r->upstream;
-
-	if (u == NULL || u->peer.free == NULL || u->peer.sockaddr == NULL) {
-		return;
-	}
-
-	u->peer.free(&u->peer, u->peer.data, state);
-	u->peer.sockaddr = NULL;
-	u->peer.connection = NULL;
 }
 
 void
@@ -233,14 +219,6 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 		r->connection->read->eof = 1;
 	}
 
-	if (ctx->resolving && ctx->resolver_ctx != NULL) {
-		ngx_resolve_name_done(ctx->resolver_ctx);
-		ctx->resolver_ctx = NULL;
-		ctx->resolving = 0;
-	}
-
-	tunnel_utils_release_request_body_ref(ctx);
-
 	tunnel_padding_h2_prepend_rst_stream_data(ctx);
 
 	tunnel_relay_close(ctx);
@@ -259,14 +237,6 @@ tunnel_relay_cleanup(void *data)
 	}
 
 	ctx->finalized = 1;
-
-	if (ctx->resolving && ctx->resolver_ctx != NULL) {
-		ngx_resolve_name_done(ctx->resolver_ctx);
-		ctx->resolver_ctx = NULL;
-		ctx->resolving = 0;
-	}
-
-	tunnel_utils_release_request_body_ref(ctx);
 
 	tunnel_relay_close(ctx);
 }
@@ -293,8 +263,4 @@ tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx)
 		r->upstream->peer.connection = NULL;
 	}
 
-	if (ctx->peer_acquired) {
-		tunnel_upstream_release_peer(r, 0);
-		ctx->peer_acquired = 0;
-	}
 }

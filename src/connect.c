@@ -2,7 +2,7 @@
 
 ngx_int_t
 tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
-								   ngx_http_tunnel_ctx_t *ctx)
+	ngx_http_tunnel_ctx_t *ctx)
 {
 	if (ngx_http_upstream_create(r) != NGX_OK) {
 		return NGX_ERROR;
@@ -60,192 +60,62 @@ tunnel_connect_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 }
 
 ngx_int_t
-tunnel_connect_next(ngx_http_tunnel_ctx_t *ctx)
+tunnel_connect_create_request(ngx_http_request_t *r)
 {
-	ngx_int_t rc;
-	ngx_connection_t *c;
-	ngx_http_request_t *r;
-	ngx_http_tunnel_srv_conf_t *tscf;
-	ngx_http_upstream_t *u;
-
-	r = ctx->request;
-	u = r->upstream;
-	c = r->connection;
-	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
-
-	rc = ngx_event_connect_peer(&u->peer);
-
-	if (rc == NGX_DECLINED) {
-		tunnel_upstream_release_peer(r, NGX_PEER_FAILED);
-		ctx->peer_acquired = 0;
-
-		if (u->peer.tries) {
-			return tunnel_connect_next(ctx);
-		}
-
-		return NGX_ERROR;
-	}
-
-	if (rc == NGX_ERROR) {
-		tunnel_upstream_release_peer(r, NGX_PEER_FAILED);
-		ctx->peer_acquired = 0;
-		return NGX_ERROR;
-	}
-
-	if (rc == NGX_BUSY) {
-		return NGX_ERROR;
-	}
-
-	ctx->peer_acquired = 1;
-
-	u->peer.connection->data = ctx;
-	u->peer.connection->pool = r->pool;
-	u->peer.connection->log = c->log;
-	u->peer.connection->read->log = c->log;
-	u->peer.connection->write->log = c->log;
-
-	if (rc == NGX_AGAIN) {
-		ctx->waiting_connect = 1;
-		u->peer.connection->read->handler = tunnel_connect_handler;
-		u->peer.connection->write->handler = tunnel_connect_handler;
-		ngx_add_timer(u->peer.connection->write, tscf->connect_timeout);
-		return NGX_OK;
-	}
-
-	return tunnel_relay_start(ctx);
-}
-
-void
-tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx)
-{
-	ngx_int_t rc;
-	ngx_http_request_t *r;
-	ngx_http_tunnel_ctx_t *ctx;
-	ngx_http_upstream_resolved_t *resolved;
-
-	ctx = resolver_ctx->data;
-	r = ctx->request;
-	resolved = ctx->resolved;
-
-	ctx->resolving = 0;
-	ctx->resolver_ctx = NULL;
-
-	if (ctx->finalized) {
-		ngx_resolve_name_done(resolver_ctx);
-		return;
-	}
-
-	if (resolver_ctx->state || resolver_ctx->naddrs == 0) {
-		ngx_resolve_name_done(resolver_ctx);
-		tunnel_relay_finalize(ctx, NGX_HTTP_BAD_GATEWAY);
-		return;
-	}
-
-	resolved->naddrs = resolver_ctx->naddrs;
-	resolved->addrs = resolver_ctx->addrs;
-
-	if (ngx_http_upstream_create_round_robin_peer(r, resolved) != NGX_OK) {
-		ngx_resolve_name_done(resolver_ctx);
-		tunnel_relay_finalize(ctx, NGX_HTTP_INTERNAL_SERVER_ERROR);
-		return;
-	}
-
-	ngx_resolve_name_done(resolver_ctx);
-
-	rc = tunnel_connect_next(ctx);
-	if (rc != NGX_OK) {
-		tunnel_relay_finalize(
-			ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE ? rc : NGX_HTTP_BAD_GATEWAY);
-	}
-}
-
-void
-tunnel_connect_handler(ngx_event_t *ev)
-{
-	ngx_connection_t *c;
-	ngx_int_t rc;
-	ngx_http_request_t *r;
-	ngx_http_tunnel_ctx_t *ctx;
-
-	c = ev->data;
-	ctx = c->data;
-	r = ctx->request;
-
-	if (ev->timedout) {
-		ngx_close_connection(c);
-		r->upstream->peer.connection = NULL;
-		ctx->waiting_connect = 0;
-		tunnel_upstream_release_peer(r, NGX_PEER_FAILED);
-		ctx->peer_acquired = 0;
-
-		if (r->upstream->peer.tries &&
-			tunnel_connect_next(ctx) == NGX_OK) {
-			return;
-		}
-
-		tunnel_relay_finalize(ctx, NGX_HTTP_GATEWAY_TIME_OUT);
-		return;
-	}
-
-	if (tunnel_connect_test(c) != NGX_OK) {
-		if (c->write->timer_set) {
-			ngx_del_timer(c->write);
-		}
-
-		ngx_close_connection(c);
-		r->upstream->peer.connection = NULL;
-		ctx->waiting_connect = 0;
-		tunnel_upstream_release_peer(r, NGX_PEER_FAILED);
-		ctx->peer_acquired = 0;
-
-		if (r->upstream->peer.tries &&
-			tunnel_connect_next(ctx) == NGX_OK) {
-			return;
-		}
-
-		tunnel_relay_finalize(ctx, NGX_HTTP_BAD_GATEWAY);
-		return;
-	}
-
-	rc = tunnel_relay_start(ctx);
-	if (rc != NGX_OK) {
-		tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
-										  ? rc
-										  : NGX_HTTP_INTERNAL_SERVER_ERROR);
-	}
+	return NGX_OK;
 }
 
 ngx_int_t
-tunnel_connect_test(ngx_connection_t *c)
+tunnel_connect_reinit_request(ngx_http_request_t *r)
 {
-	int err;
-	socklen_t len;
+	return NGX_OK;
+}
 
-#if (NGX_HAVE_KQUEUE)
+ngx_int_t
+tunnel_connect_process_header(ngx_http_request_t *r)
+{
+	ngx_int_t rc;
+	ngx_http_tunnel_ctx_t *ctx;
+	ngx_http_upstream_t *u;
 
-	if (ngx_event_flags & NGX_USE_KQUEUE_EVENT) {
-		if (c->write->pending_eof || c->read->pending_eof) {
-			err =
-				c->write->pending_eof ? c->write->kq_errno : c->read->kq_errno;
-			(void)ngx_connection_error(
-				c, err, "kevent() reported that connect() failed");
-			return NGX_ERROR;
-		}
-	} else
-#endif
-	{
-		err = 0;
-		len = sizeof(int);
+	u = r->upstream;
 
-		if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, (void *)&err, &len) == -1) {
-			err = ngx_socket_errno;
-		}
+	u->headers_in.status_n = NGX_HTTP_OK;
+	ngx_str_set(&u->headers_in.status_line, "200 Connection Established");
 
-		if (err != 0) {
-			(void)ngx_connection_error(c, err, "connect() failed");
-			return NGX_ERROR;
-		}
+	r->keepalive = 0;
+	u->keepalive = 0;
+
+	if (!tunnel_relay_is_stream_downstream(r)) {
+		u->upgrade = 1;
+		return NGX_OK;
 	}
 
-	return NGX_OK;
+	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+	if (ctx == NULL) {
+		return NGX_ERROR;
+	}
+
+	/*
+	 * HTTP/2 and HTTP/3 CONNECT downstreams are streams, not raw client
+	 * sockets. After upstream connects, the module takes over with a
+	 * stream-aware relay while upstream keeps ownership of peer setup.
+	 */
+	rc = tunnel_relay_start(ctx);
+
+	return (rc == NGX_OK) ? NGX_DONE : NGX_ERROR;
+}
+
+void
+tunnel_connect_abort_request(ngx_http_request_t *r)
+{
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "abort tunnel upstream request");
+}
+
+void
+tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
+{
+	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "finalize tunnel upstream request");
 }

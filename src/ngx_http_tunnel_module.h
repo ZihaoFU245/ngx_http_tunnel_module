@@ -13,6 +13,7 @@
 
 typedef struct {
 	ngx_flag_t enable;
+	ngx_http_upstream_conf_t upstream;
 	ngx_str_t auth_username;
 	ngx_str_t auth_password;
 	size_t buffer_size;
@@ -43,15 +44,11 @@ typedef struct {
 	ngx_buf_t *upstream_buffer;
 	ngx_chain_t *downstream_chain;
 	ngx_http_upstream_resolved_t *resolved;
-	ngx_resolver_ctx_t *resolver_ctx;
 	tunnel_padding_ctx_t *padding;
 	unsigned finalized : 1;
 	unsigned connected : 1;
-	unsigned waiting_connect : 1;
-	unsigned resolving : 1;
-	unsigned peer_acquired : 1;
+	unsigned cleanup_added : 1;
 	unsigned request_body_started : 1;
-	unsigned request_body_ref_released : 1;
 	unsigned downstream_eof : 1;
 } ngx_http_tunnel_ctx_t;
 
@@ -73,21 +70,20 @@ ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
 	ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_parse_target(ngx_http_request_t *r,
 	ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_connect_next(ngx_http_tunnel_ctx_t *ctx);
-void tunnel_resolve_handler(ngx_resolver_ctx_t *resolver_ctx);
-void tunnel_connect_handler(ngx_event_t *ev);
-ngx_int_t tunnel_connect_test(ngx_connection_t *c);
+ngx_int_t tunnel_connect_create_request(ngx_http_request_t *r);
+ngx_int_t tunnel_connect_reinit_request(ngx_http_request_t *r);
+ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
+void tunnel_connect_abort_request(ngx_http_request_t *r);
+void tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
 
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r);
 ngx_int_t tunnel_relay_is_stream_downstream(ngx_http_request_t *r);
-ngx_int_t tunnel_relay_v1_process(ngx_http_tunnel_ctx_t *ctx,
-	ngx_uint_t from_upstream, ngx_uint_t do_write);
 ngx_int_t tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_relay_v3_init_request_body(ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_relay_v3_process(ngx_http_tunnel_ctx_t *ctx);
 
+ngx_int_t tunnel_padding_needed(ngx_http_request_t *r);
+size_t tunnel_padding_buffer_size(ngx_http_request_t *r);
 ngx_int_t tunnel_padding_negotiate(ngx_http_request_t *r,
 	ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_padding_add_response_header(ngx_http_request_t *r,
@@ -114,9 +110,7 @@ void tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx,
 void tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 void tunnel_relay_cleanup(void *data);
 void tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx);
-void tunnel_upstream_release_peer(ngx_http_request_t *r, ngx_uint_t state);
 
-void tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx);
 void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,

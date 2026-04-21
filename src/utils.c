@@ -1,24 +1,6 @@
 #include "ngx_http_tunnel_module.h"
 
 void
-tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx)
-{
-	ngx_http_request_t *r;
-
-	if (ctx == NULL || !ctx->request_body_started ||
-		ctx->request_body_ref_released) {
-		return;
-	}
-
-	ctx->request_body_ref_released = 1;
-	r = ctx->request;
-
-	if (r != NULL) {
-		r->main->count--;
-	}
-}
-
-void
 tunnel_utils_clear_timer(ngx_event_t *ev)
 {
 	if (ev->timer_set) {

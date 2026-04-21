@@ -256,7 +256,9 @@ tunnel_relay_v2_request_body_post_handler(ngx_http_request_t *r)
 	ngx_http_tunnel_ctx_t *ctx;
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
-	tunnel_utils_release_request_body_ref(ctx);
+	if (ctx != NULL && ctx->connected) {
+		tunnel_relay_process(ctx, 0, 1);
+	}
 
 	return;
 }

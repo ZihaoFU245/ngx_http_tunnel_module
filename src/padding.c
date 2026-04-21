@@ -33,17 +33,10 @@ static ngx_int_t tunnel_padding_h2_rst_stream_data_handler(
 	ngx_http_v2_connection_t *h2c, ngx_http_v2_out_frame_t *frame);
 
 ngx_int_t
-tunnel_padding_negotiate(ngx_http_request_t *r,
-								  ngx_http_tunnel_ctx_t *ctx)
+tunnel_padding_needed(ngx_http_request_t *r)
 {
-	tunnel_padding_ctx_t *padding;
-	ngx_http_tunnel_srv_conf_t *tscf;
-	size_t size;
-
-	ctx->padding = NULL;
-
 	if (tunnel_padding_enabled(r) != NGX_OK) {
-		return NGX_OK;
+		return NGX_DECLINED;
 	}
 
 	/*
@@ -51,35 +44,51 @@ tunnel_padding_negotiate(ngx_http_request_t *r,
 	 * but H3 is untested yet, so block H3 for safety.
 	 */
 	if (r->http_version != NGX_HTTP_VERSION_20) {
-		return NGX_OK;
+		return NGX_DECLINED;
 	}
 
 	if (tunnel_padding_present(r) != NGX_OK) {
+		return NGX_DECLINED;
+	}
+
+	return NGX_OK;
+}
+
+size_t
+tunnel_padding_buffer_size(ngx_http_request_t *r)
+{
+	ngx_http_tunnel_srv_conf_t *tscf;
+
+	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+
+	return ngx_min(tscf->buffer_size, (size_t)65535) + 3 +
+		   NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
+}
+
+ngx_int_t
+tunnel_padding_negotiate(ngx_http_request_t *r,
+								  ngx_http_tunnel_ctx_t *ctx)
+{
+	tunnel_padding_ctx_t *padding;
+
+	if (tunnel_padding_needed(r) != NGX_OK) {
 		return NGX_OK;
 	}
 
-	padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
-	if (padding == NULL) {
+	if (ctx == NULL || ctx->padding == NULL ||
+		ctx->padding->buffer == NULL) {
 		return NGX_ERROR;
 	}
+
+	padding = ctx->padding;
 
 	if (tunnel_padding_generate_response_value(
 			r, padding, &padding->response_value) != NGX_OK) {
 		return NGX_ERROR;
 	}
 
-	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
-	size = ngx_min(tscf->buffer_size, (size_t)65535) + 3 +
-		   NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
-
-	padding->buffer = ngx_create_temp_buf(r->pool, size);
-	if (padding->buffer == NULL) {
-		return NGX_ERROR;
-	}
-
 	padding->response_ready = 1;
 	padding->read_state = NGX_HTTP_TUNNEL_PADDING_READ_HEADER;
-	ctx->padding = padding;
 
 	return NGX_OK;
 }

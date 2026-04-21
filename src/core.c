@@ -123,9 +123,9 @@ ngx_int_t
 ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 {
 	ngx_int_t rc;
-	ngx_http_cleanup_t *cln;
 	ngx_http_tunnel_ctx_t *ctx;
 	ngx_http_tunnel_srv_conf_t *tscf;
+	ngx_http_upstream_t *u;
 
 	if (r->method != NGX_HTTP_CONNECT) {
 		return NGX_DECLINED;
@@ -163,19 +163,24 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	if (tunnel_padding_negotiate(r, ctx) != NGX_OK) {
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	if (tunnel_padding_needed(r) == NGX_OK) {
+		ctx->padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
+		if (ctx->padding == NULL) {
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		}
+
+		ctx->padding->buffer = ngx_create_temp_buf(
+			r->pool, tunnel_padding_buffer_size(r));
+		if (ctx->padding->buffer == NULL) {
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		}
+
+		if (tunnel_padding_negotiate(r, ctx) != NGX_OK) {
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		}
 	}
 
 	ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
-
-	cln = ngx_http_cleanup_add(r, 0);
-	if (cln == NULL) {
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
-	}
-
-	cln->handler = tunnel_relay_cleanup;
-	cln->data = ctx;
 
 	if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -186,57 +191,17 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return rc;
 	}
 
+	u = r->upstream;
+	u->conf = &tscf->upstream;
+	u->create_request = tunnel_connect_create_request;
+	u->reinit_request = tunnel_connect_reinit_request;
+	u->process_header = tunnel_connect_process_header;
+	u->abort_request = tunnel_connect_abort_request;
+	u->finalize_request = tunnel_connect_finalize_request;
+
 	r->main->count++;
 
-	if (ctx->resolved->sockaddr != NULL || ctx->resolved->naddrs != 0) {
-		if (ngx_http_upstream_create_round_robin_peer(r, ctx->resolved) !=
-			NGX_OK) {
-			r->main->count--;
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		}
-
-		rc = tunnel_connect_next(ctx);
-		if (rc != NGX_OK) {
-			tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
-											  ? rc
-											  : NGX_HTTP_BAD_GATEWAY);
-		}
-
-		return NGX_DONE;
-	}
-
-	{
-		ngx_http_core_loc_conf_t *clcf;
-		ngx_resolver_ctx_t temp;
-
-		clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-		ngx_memzero(&temp, sizeof(ngx_resolver_ctx_t));
-		temp.name = ctx->resolved->host;
-
-		ctx->resolver_ctx = ngx_resolve_start(clcf->resolver, &temp);
-		if (ctx->resolver_ctx == NULL) {
-			r->main->count--;
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		}
-
-		if (ctx->resolver_ctx == NGX_NO_RESOLVER) {
-			r->main->count--;
-			return NGX_HTTP_BAD_GATEWAY;
-		}
-
-		ctx->resolving = 1;
-		ctx->resolver_ctx->name = ctx->resolved->host;
-		ctx->resolver_ctx->handler = tunnel_resolve_handler;
-		ctx->resolver_ctx->data = ctx;
-		ctx->resolver_ctx->timeout = clcf->resolver_timeout;
-
-		if (ngx_resolve_name(ctx->resolver_ctx) != NGX_OK) {
-			ctx->resolving = 0;
-			ctx->resolver_ctx = NULL;
-			r->main->count--;
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		}
-	}
+	ngx_http_upstream_init(r);
 
 	return NGX_DONE;
 }
@@ -275,6 +240,18 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	conf->idle_timeout = NGX_CONF_UNSET_MSEC;
 	conf->probe_resistance = NGX_CONF_UNSET;
 	conf->padding = NGX_CONF_UNSET;
+	conf->upstream.store = NGX_CONF_UNSET;
+	conf->upstream.store_access = NGX_CONF_UNSET_UINT;
+	conf->upstream.next_upstream_tries = NGX_CONF_UNSET_UINT;
+	conf->upstream.buffering = NGX_CONF_UNSET;
+	conf->upstream.request_buffering = NGX_CONF_UNSET;
+	conf->upstream.ignore_client_abort = NGX_CONF_UNSET;
+	conf->upstream.connect_timeout = NGX_CONF_UNSET_MSEC;
+	conf->upstream.send_timeout = NGX_CONF_UNSET_MSEC;
+	conf->upstream.read_timeout = NGX_CONF_UNSET_MSEC;
+	conf->upstream.next_upstream_timeout = NGX_CONF_UNSET_MSEC;
+	conf->upstream.send_lowat = NGX_CONF_UNSET_SIZE;
+	conf->upstream.buffer_size = NGX_CONF_UNSET_SIZE;
 
 	return conf;
 }
@@ -294,6 +271,46 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
 	ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
+	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
+	ngx_conf_merge_uint_value(conf->upstream.store_access,
+							  prev->upstream.store_access, 0600);
+	ngx_conf_merge_uint_value(conf->upstream.next_upstream_tries,
+							  prev->upstream.next_upstream_tries, 0);
+	ngx_conf_merge_value(conf->upstream.buffering, prev->upstream.buffering,
+						 0);
+	ngx_conf_merge_value(conf->upstream.request_buffering,
+						 prev->upstream.request_buffering, 0);
+	ngx_conf_merge_value(conf->upstream.ignore_client_abort,
+						 prev->upstream.ignore_client_abort, 0);
+	ngx_conf_merge_msec_value(conf->upstream.connect_timeout,
+							  prev->upstream.connect_timeout,
+							  conf->connect_timeout);
+	ngx_conf_merge_msec_value(conf->upstream.send_timeout,
+							  prev->upstream.send_timeout,
+							  conf->idle_timeout);
+	ngx_conf_merge_msec_value(conf->upstream.read_timeout,
+							  prev->upstream.read_timeout,
+							  conf->idle_timeout);
+	ngx_conf_merge_msec_value(conf->upstream.next_upstream_timeout,
+							  prev->upstream.next_upstream_timeout, 0);
+	ngx_conf_merge_size_value(conf->upstream.send_lowat,
+							  prev->upstream.send_lowat, 0);
+	ngx_conf_merge_size_value(conf->upstream.buffer_size,
+							  prev->upstream.buffer_size, conf->buffer_size);
+
+	ngx_conf_merge_bitmask_value(conf->upstream.next_upstream,
+								 prev->upstream.next_upstream,
+								 (NGX_CONF_BITMASK_SET |
+								  NGX_HTTP_UPSTREAM_FT_ERROR |
+								  NGX_HTTP_UPSTREAM_FT_TIMEOUT));
+
+	if (conf->upstream.next_upstream & NGX_HTTP_UPSTREAM_FT_OFF) {
+		conf->upstream.next_upstream = NGX_CONF_BITMASK_SET |
+									   NGX_HTTP_UPSTREAM_FT_OFF;
+	}
+
+	conf->upstream.ignore_input = 1;
+	ngx_str_set(&conf->upstream.module, "tunnel");
 
 	if ((conf->auth_username.len == 0) != (conf->auth_password.len == 0)) {
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
