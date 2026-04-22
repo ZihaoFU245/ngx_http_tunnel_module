@@ -263,12 +263,29 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 	 */
 	tunnel_utils_release_request_body_ref(ctx);
 
-	if (rc == NGX_OK && r->connection->quic) {
+	/*
+	 * Release the reference from r->main->count++ in
+	 * ngx_http_tunnel_content_handler(). The upstream module normally
+	 * balances this in ngx_http_upstream_finalize_request(), but for
+	 * stream protocols process_header returns NGX_DONE and the upstream
+	 * module just returns without running its finalize path. Without
+	 * this, the request pool survives until the H2/H3 transport
+	 * connection itself closes.
+	 */
+	if (r->main->count > 1) {
+		r->main->count--;
+	}
+
+	if (tunnel_relay_is_stream_downstream(r)) {
 		/*
-		 * A cleanly finished CONNECT tunnel should close only the request
-		 * stream. If the read side is left open, nginx treats the stream as
-		 * aborted and sends CANCEL_STREAM during close, which can escalate to
-		 * closing the whole HTTP/3 connection when that send fails.
+		 * For any tunnel exit (success or error) on stream protocols (HTTP/2
+		 * and HTTP/3), mark the stream as EOF. This prevents nginx from
+		 * attempting to send stream reset frames (RST_STREAM for HTTP/2,
+		 * CANCEL_STREAM for HTTP/3) during cleanup. Such sends can fail if
+		 * the stream/session state has been modified by tunnel_relay_close(),
+		 * and upstream failures can escalate to closing the entire connection.
+		 * By marking EOF, we tell nginx the stream is cleanly closed without
+		 * needing protocol-specific signaling.
 		 */
 		r->connection->read->eof = 1;
 	}
