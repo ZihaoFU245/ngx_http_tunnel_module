@@ -1,5 +1,7 @@
 #include "ngx_http_tunnel_module.h"
 
+static void tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx);
+
 ngx_int_t
 tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 {
@@ -66,7 +68,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 	tunnel_utils_update_idle_timer(c->read, tscf->idle_timeout);
 
 	if (pc->read->ready) {
-		ngx_post_event(c->read, &ngx_posted_events);
+		tunnel_relay_post_downstream_read(ctx);
 		tunnel_relay_process(ctx, 1, 1);
 		return NGX_OK;
 	}
@@ -124,6 +126,7 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 		return;
 	}
 
+	ctx->downstream_read_posted = 0;
 	tunnel_relay_process(ctx, 0, 0);
 }
 
@@ -192,6 +195,21 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
 }
 
 void
+tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_event_t *rev;
+
+	rev = ctx->request->connection->read;
+
+	if (rev->posted) {
+		return;
+	}
+
+	ngx_post_event(rev, &ngx_posted_events);
+	ctx->downstream_read_posted = 1;
+}
+
+void
 tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 {
 	ngx_http_request_t *r;
@@ -202,6 +220,16 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 
 	ctx->finalized = 1;
 	r = ctx->request;
+
+	/*
+	 * Release the reference acquired by ngx_http_read_client_request_body().
+	 * Without this, any tunnel exit that isn't a natural client-body EOF
+	 * (upstream close, timeout, relay error) leaves r->main->count above
+	 * zero, so ngx_http_free_request() never runs and the request pool
+	 * (tunnel buffers, padding buffer, ctx) is held until the H2/H3
+	 * transport connection itself closes.
+	 */
+	tunnel_utils_release_request_body_ref(ctx);
 
 	if (rc == NGX_OK && r->connection->quic) {
 		/*
@@ -241,20 +269,70 @@ tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx)
 	ngx_connection_t *c;
 	ngx_connection_t *pc;
 	ngx_http_request_t *r;
+	ngx_http_upstream_t *u;
 
 	r = ctx->request;
 	c = r->connection;
+	u = r->upstream;
+
+	tunnel_relay_cancel_downstream_read(ctx);
+	tunnel_utils_release_request_body_ref(ctx);
 
 	tunnel_utils_clear_timer(c->read);
 	tunnel_utils_clear_timer(c->write);
 
-	pc = (r->upstream != NULL) ? r->upstream->peer.connection : NULL;
+	if (u == NULL) {
+		return;
+	}
+
+	/*
+	 * The stream relay finalizes the HTTP request itself after taking over
+	 * from upstream.  Disarm nginx upstream cleanup so request cleanup does
+	 * not re-enter upstream finalization on an already closed tunnel.
+	 */
+	if (u->cleanup) {
+		*u->cleanup = NULL;
+		u->cleanup = NULL;
+	}
+
+	if (u->resolved && u->resolved->ctx) {
+		ngx_resolve_name_done(u->resolved->ctx);
+		u->resolved->ctx = NULL;
+	}
+
+	if (u->peer.free && u->peer.sockaddr) {
+		u->peer.free(&u->peer, u->peer.data, 0);
+		u->peer.sockaddr = NULL;
+	}
+
+	pc = u->peer.connection;
 	if (pc != NULL) {
 		tunnel_utils_clear_timer(pc->read);
 		tunnel_utils_clear_timer(pc->write);
 
 		ngx_close_connection(pc);
-		r->upstream->peer.connection = NULL;
+		u->peer.connection = NULL;
 	}
 
+}
+
+static void
+tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_event_t *rev;
+
+	rev = ctx->request->connection->read;
+
+	/*
+	 * The stream relay can self-post c->read as a wakeup. Remove only the
+	 * event posted by this module before closing: after the request is freed,
+	 * a stale relay wakeup would fire on a dead stream and re-enter request
+	 * finalization.
+	 */
+	if (ctx->downstream_read_posted && rev->posted) {
+		ngx_delete_posted_event(rev);
+	}
+
+	ctx->downstream_read_posted = 0;
+	ctx->stall_wakeup_posted = 0;
 }

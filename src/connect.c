@@ -96,12 +96,20 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 	 * stream-aware relay while upstream keeps ownership of peer setup.
 	 */
 	rc = tunnel_relay_start(ctx);
-	if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-		tunnel_relay_finalize(ctx, rc);
+	if (rc != NGX_OK) {
+		/*
+		 * Route every relay_start failure through tunnel_relay_finalize so
+		 * the request-body ref acquired inside tunnel_relay_v2_init_request_body
+		 * is released; otherwise ngx_http_finalize_request alone cannot bring
+		 * r->main->count to zero and the request pool leaks.
+		 */
+		tunnel_relay_finalize(ctx,
+			rc >= NGX_HTTP_SPECIAL_RESPONSE
+				? rc : NGX_HTTP_INTERNAL_SERVER_ERROR);
 		return NGX_DONE;
 	}
 
-	return (rc == NGX_OK) ? NGX_DONE : NGX_ERROR;
+	return NGX_DONE;
 }
 
 void

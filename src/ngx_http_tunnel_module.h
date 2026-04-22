@@ -52,6 +52,8 @@ typedef struct {
 	unsigned request_body_ref_acquired : 1;
 	unsigned request_body_ref_released : 1;
 	unsigned downstream_eof : 1;
+	unsigned downstream_read_posted : 1;
+	unsigned stall_wakeup_posted : 1;
 } ngx_http_tunnel_ctx_t;
 
 extern ngx_module_t ngx_http_tunnel_module;
@@ -115,6 +117,7 @@ void tunnel_relay_upstream_read_handler(ngx_event_t *ev);
 void tunnel_relay_upstream_write_handler(ngx_event_t *ev);
 void tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx,
 	ngx_uint_t from_upstream, ngx_uint_t do_write);
+void tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx);
 void tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 void tunnel_relay_cleanup(void *data);
 void tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx);

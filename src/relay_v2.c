@@ -194,6 +194,29 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 		tunnel_utils_update_idle_timer(pc->read, idle_timeout);
 		tunnel_utils_update_idle_timer(c->write, idle_timeout);
 		tunnel_utils_update_idle_timer(c->read, idle_timeout);
+
+		/*
+		 * Any forward progress invalidates a pending self-post: a real
+		 * event drove us this time, so allow a fresh nudge if we stall
+		 * again.
+		 */
+		ctx->stall_wakeup_posted = 0;
+	}
+
+	/*
+	 * Defensive wakeup: if the upload side is fully drained but the client
+	 * body is still streaming, re-queue our downstream read handler on the
+	 * next event-loop tick. On H3 in particular, a request-body arrival
+	 * can get dispatched through nginx paths that do not reach
+	 * r->read_event_handler, leaving this pump starved until the idle
+	 * timer fires. Posting once per idle transition (guarded by
+	 * stall_wakeup_posted) avoids busy-spinning inside
+	 * ngx_event_process_posted while still forcing a re-check.
+	 */
+	if (!ctx->stall_wakeup_posted && upload_drained && r->reading_body
+		&& !ctx->downstream_eof && !pc->read->eof) {
+		tunnel_relay_post_downstream_read(ctx);
+		ctx->stall_wakeup_posted = 1;
 	}
 
 	return NGX_OK;
@@ -215,12 +238,10 @@ tunnel_relay_v2_output_idle(ngx_http_request_t *r, ngx_connection_t *c)
 static ngx_inline ngx_uint_t
 tunnel_relay_v2_recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx)
 {
-	ngx_connection_t *c;
 	ngx_connection_t *pc;
 	ngx_http_request_t *r;
 
 	r = ctx->request;
-	c = r->connection;
 	pc = r->upstream->peer.connection;
 
 	if (pc == NULL || !pc->read->ready) {
@@ -235,7 +256,20 @@ tunnel_relay_v2_recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx)
 		return 0;
 	}
 
-	return tunnel_relay_v2_output_idle(r, c);
+	/*
+	 * Historically this also required output_idle (r->out == NULL &&
+	 * !r->buffered && !c->buffered). That gate starved H3 download: QUIC
+	 * keeps c->buffered set while frames sit in its internal queue, so the
+	 * precheck could never pass and no further upstream bytes were pulled.
+	 *
+	 * Dropping the output_idle condition is safe because upstream_buffer
+	 * reuse is already guarded: the send path only rewinds the buffer when
+	 * r->out == NULL && !r->buffered && !c->buffered (see
+	 * tunnel_relay_v2_send_downstream below), so the filter cannot still
+	 * reference bytes past b->last. Bytes written by this recv land at
+	 * b->last..b->end, which the filter has not observed.
+	 */
+	return 1;
 }
 
 static ngx_inline ngx_uint_t
