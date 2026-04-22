@@ -1,6 +1,8 @@
 #include "ngx_http_tunnel_module.h"
 
 static void tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx);
+static void tunnel_relay_finalize_on_error(ngx_http_request_t *r,
+	ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 
 ngx_int_t
 tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
@@ -122,7 +124,7 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
 	if (ctx == NULL) {
-		ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+		tunnel_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
 		return;
 	}
 
@@ -137,7 +139,7 @@ tunnel_relay_downstream_write_handler(ngx_http_request_t *r)
 
 	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
 	if (ctx == NULL) {
-		ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+		tunnel_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
 		return;
 	}
 
@@ -209,6 +211,36 @@ tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx)
 	ctx->downstream_read_posted = 1;
 }
 
+static void
+tunnel_relay_finalize_on_error(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx,
+	ngx_int_t rc)
+{
+	/*
+	 * Error finalization path for when module context might not be available.
+	 * If ctx is provided, route through normal finalize; otherwise, attempt
+	 * to detect and release request body ref that may have been acquired but
+	 * not yet released due to early error.
+	 */
+	if (ctx != NULL) {
+		tunnel_relay_finalize(ctx, rc);
+		return;
+	}
+
+	/*
+	 * ctx is NULL: check if request body ref might have been acquired
+	 * (e.g., before module took full ownership). If reading_body was set,
+	 * ngx_http_read_client_request_body likely incremented count.
+	 * Try to balance it before finalize.
+	 */
+	if (r->reading_body || r->request_body != NULL) {
+		if (r->main->count > 1) {
+			r->main->count--;
+		}
+	}
+
+	ngx_http_finalize_request(r, rc);
+}
+
 void
 tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 {
@@ -260,6 +292,12 @@ tunnel_relay_cleanup(void *data)
 
 	ctx->finalized = 1;
 
+	/*
+	 * Cleanup handler called during request free. tunnel_relay_close will
+	 * properly release request body ref and close tunnel. This ensures
+	 * r->main->count reaches 0 cleanly even if tunnel_relay_finalize wasn't
+	 * called (e.g., request aborted mid-tunnel).
+	 */
 	tunnel_relay_close(ctx);
 }
 

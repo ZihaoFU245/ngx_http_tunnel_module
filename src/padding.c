@@ -39,14 +39,6 @@ tunnel_padding_needed(ngx_http_request_t *r)
 		return NGX_DECLINED;
 	}
 
-	/*
-	 * Although H2/H3 share same data path,
-	 * but H3 is untested yet, so block H3 for safety.
-	 */
-	if (r->http_version != NGX_HTTP_VERSION_20) {
-		return NGX_DECLINED;
-	}
-
 	if (tunnel_padding_present(r) != NGX_OK) {
 		return NGX_DECLINED;
 	}
