@@ -1,7 +1,7 @@
 #include "ngx_http_tunnel_module.h"
 
 ngx_int_t
-ngx_http_tunnel_set_proxy_authenticate(ngx_http_request_t *r)
+tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r)
 {
 	static ngx_str_t realm = ngx_string("Basic realm=\"proxy\"");
 
@@ -19,8 +19,8 @@ ngx_http_tunnel_set_proxy_authenticate(ngx_http_request_t *r)
 }
 
 ngx_int_t
-ngx_http_tunnel_access_denied(ngx_http_request_t *r,
-							  ngx_http_tunnel_srv_conf_t *tscf)
+tunnel_auth_access_denied(ngx_http_request_t *r,
+						  ngx_http_tunnel_srv_conf_t *tscf)
 {
 	if (tscf->probe_resistance) {
 		ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
@@ -36,12 +36,11 @@ ngx_http_tunnel_access_denied(ngx_http_request_t *r,
 		return NGX_HTTP_NOT_ALLOWED;
 	}
 
-	return ngx_http_tunnel_set_proxy_authenticate(r);
+	return tunnel_auth_set_proxy_authenticate(r);
 }
 
 ngx_int_t
-ngx_http_tunnel_check_auth(ngx_http_request_t *r,
-						   ngx_http_tunnel_srv_conf_t *tscf)
+tunnel_auth_check(ngx_http_request_t *r, ngx_http_tunnel_srv_conf_t *tscf)
 {
 	size_t len;
 	ngx_str_t auth;
@@ -56,7 +55,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 
 	header = r->headers_in.proxy_authorization;
 	if (header == NULL) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	encoded = header->value;
@@ -64,7 +63,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 	if (encoded.len < sizeof("Basic ") - 1 ||
 		ngx_strncasecmp(encoded.data, (u_char *)"Basic ",
 						sizeof("Basic ") - 1) != 0) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	encoded.len -= sizeof("Basic ") - 1;
@@ -76,7 +75,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 	}
 
 	if (encoded.len == 0) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	decoded.len = ngx_base64_decoded_length(encoded.len);
@@ -86,14 +85,14 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 	}
 
 	if (ngx_decode_base64(&decoded, &encoded) != NGX_OK) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	decoded.data[decoded.len] = '\0';
 	colon = ngx_strlchr(decoded.data, decoded.data + decoded.len, ':');
 	if (colon == NULL || colon == decoded.data ||
 		colon == decoded.data + decoded.len) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	auth.data = decoded.data;
@@ -101,7 +100,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 
 	if (auth.len != tscf->auth_username.len ||
 		ngx_strncmp(auth.data, tscf->auth_username.data, auth.len) != 0) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	colon++;
@@ -109,7 +108,7 @@ ngx_http_tunnel_check_auth(ngx_http_request_t *r,
 
 	if (len != tscf->auth_password.len ||
 		ngx_strncmp(colon, tscf->auth_password.data, len) != 0) {
-		return ngx_http_tunnel_access_denied(r, tscf);
+		return tunnel_auth_access_denied(r, tscf);
 	}
 
 	return NGX_OK;
