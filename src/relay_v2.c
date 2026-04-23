@@ -3,26 +3,22 @@
 static void tunnel_relay_v2_request_body_post_handler(ngx_http_request_t *r);
 static ngx_inline ngx_uint_t
 tunnel_relay_v2_padding_drained(ngx_http_tunnel_ctx_t *ctx);
-static ngx_inline ngx_uint_t
-tunnel_relay_v2_output_idle(ngx_http_request_t *r, ngx_connection_t *c);
+static ngx_inline ngx_uint_t tunnel_relay_v2_output_idle(ngx_http_request_t *r,
+														 ngx_connection_t *c);
 static ngx_inline ngx_uint_t
 tunnel_relay_v2_recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t
 tunnel_relay_v2_recv_downstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t
 tunnel_relay_v2_upload_padding_active(ngx_http_tunnel_ctx_t *ctx);
-static ngx_int_t
-tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx,
-									 ngx_uint_t *activity);
-static ngx_int_t
-tunnel_relay_v2_send_client_buffer(ngx_http_tunnel_ctx_t *ctx,
-	ngx_uint_t *activity);
-static ngx_int_t
-tunnel_relay_v2_send_downstream(ngx_http_tunnel_ctx_t *ctx,
-									   ngx_uint_t *activity);
-static ngx_int_t
-tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
-									   ngx_uint_t *activity);
+static ngx_int_t tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx,
+											   ngx_uint_t *activity);
+static ngx_int_t tunnel_relay_v2_send_client_buffer(ngx_http_tunnel_ctx_t *ctx,
+													ngx_uint_t *activity);
+static ngx_int_t tunnel_relay_v2_send_downstream(ngx_http_tunnel_ctx_t *ctx,
+												 ngx_uint_t *activity);
+static ngx_int_t tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
+												 ngx_uint_t *activity);
 
 ngx_int_t
 tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx)
@@ -213,8 +209,8 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 	 * stall_wakeup_posted) avoids busy-spinning inside
 	 * ngx_event_process_posted while still forcing a re-check.
 	 */
-	if (!ctx->stall_wakeup_posted && upload_drained && r->reading_body
-		&& !ctx->downstream_eof && !pc->read->eof) {
+	if (!ctx->stall_wakeup_posted && upload_drained && r->reading_body &&
+		!ctx->downstream_eof && !pc->read->eof) {
 		tunnel_relay_post_downstream_read(ctx);
 		ctx->stall_wakeup_posted = 1;
 	}
@@ -293,7 +289,7 @@ tunnel_relay_v2_request_body_post_handler(ngx_http_request_t *r)
 
 static ngx_int_t
 tunnel_relay_v2_send_downstream(ngx_http_tunnel_ctx_t *ctx,
-									   ngx_uint_t *activity)
+								ngx_uint_t *activity)
 {
 	ngx_int_t rc;
 	ngx_buf_t *b;
@@ -362,7 +358,7 @@ tunnel_relay_v2_send_downstream(ngx_http_tunnel_ctx_t *ctx,
 
 static ngx_int_t
 tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
-									   ngx_uint_t *activity)
+								ngx_uint_t *activity)
 {
 	ngx_int_t rc;
 	ngx_http_request_t *r;
@@ -400,8 +396,7 @@ tunnel_relay_v2_recv_downstream(ngx_http_tunnel_ctx_t *ctx,
 }
 
 static ngx_int_t
-tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx,
-									 ngx_uint_t *activity)
+tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
 	ngx_int_t rc;
 	ngx_buf_t *b;
@@ -434,8 +429,8 @@ tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx,
 		return NGX_OK;
 	}
 
-	if (tunnel_utils_copy_chain_to_buffer(
-			r, &ctx->downstream_chain, b, (size_t)-1)) {
+	if (tunnel_utils_copy_chain_to_buffer(r, &ctx->downstream_chain, b,
+										  (size_t)-1)) {
 		*activity = 1;
 	}
 
@@ -448,7 +443,7 @@ tunnel_relay_v2_send_upstream(ngx_http_tunnel_ctx_t *ctx,
 
 static ngx_int_t
 tunnel_relay_v2_send_client_buffer(ngx_http_tunnel_ctx_t *ctx,
-	ngx_uint_t *activity)
+								   ngx_uint_t *activity)
 {
 	ssize_t n;
 	size_t size;

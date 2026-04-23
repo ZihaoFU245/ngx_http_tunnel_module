@@ -2,7 +2,8 @@
 
 static void tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx);
 static void tunnel_relay_finalize_on_error(ngx_http_request_t *r,
-	ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
+										   ngx_http_tunnel_ctx_t *ctx,
+										   ngx_int_t rc);
 
 ngx_int_t
 tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
@@ -172,7 +173,7 @@ tunnel_relay_upstream_write_handler(ngx_event_t *ev)
 
 void
 tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
-						ngx_uint_t do_write)
+					 ngx_uint_t do_write)
 {
 	ngx_int_t rc;
 
@@ -212,8 +213,8 @@ tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx)
 }
 
 static void
-tunnel_relay_finalize_on_error(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx,
-	ngx_int_t rc)
+tunnel_relay_finalize_on_error(ngx_http_request_t *r,
+							   ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 {
 	/*
 	 * Error finalization path for when module context might not be available.
@@ -368,7 +369,6 @@ tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx)
 		ngx_close_connection(pc);
 		u->peer.connection = NULL;
 	}
-
 }
 
 static void

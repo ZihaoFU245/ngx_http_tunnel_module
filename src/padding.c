@@ -16,21 +16,18 @@
 static ngx_int_t tunnel_padding_enabled(ngx_http_request_t *r);
 static ngx_int_t tunnel_padding_present(ngx_http_request_t *r);
 static ngx_int_t tunnel_padding_generate_response_value(
-	ngx_http_request_t *r, tunnel_padding_ctx_t *padding,
-	ngx_str_t *value);
+	ngx_http_request_t *r, tunnel_padding_ctx_t *padding, ngx_str_t *value);
 static ngx_chain_t *tunnel_padding_next_chain(ngx_http_request_t *r,
-													   ngx_chain_t **chain);
-static void
-tunnel_padding_complete_downstream_frame(ngx_http_tunnel_ctx_t *ctx,
-												  ngx_uint_t *activity);
-static ngx_int_t
-tunnel_padding_build_output_frame(ngx_http_tunnel_ctx_t *ctx);
-static ngx_int_t
-tunnel_padding_queue_h2_rst_stream_data(ngx_http_request_t *r);
+											  ngx_chain_t **chain);
+static void tunnel_padding_complete_downstream_frame(ngx_http_tunnel_ctx_t *ctx,
+													 ngx_uint_t *activity);
+static ngx_int_t tunnel_padding_build_output_frame(ngx_http_tunnel_ctx_t *ctx);
+static ngx_int_t tunnel_padding_queue_h2_rst_stream_data(ngx_http_request_t *r);
 static ngx_int_t
 tunnel_padding_h2_send_rst_stream_precheck(ngx_http_request_t *r);
-static ngx_int_t tunnel_padding_h2_rst_stream_data_handler(
-	ngx_http_v2_connection_t *h2c, ngx_http_v2_out_frame_t *frame);
+static ngx_int_t
+tunnel_padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
+										  ngx_http_v2_out_frame_t *frame);
 
 ngx_int_t
 tunnel_padding_needed(ngx_http_request_t *r)
@@ -58,8 +55,7 @@ tunnel_padding_buffer_size(ngx_http_request_t *r)
 }
 
 ngx_int_t
-tunnel_padding_negotiate(ngx_http_request_t *r,
-								  ngx_http_tunnel_ctx_t *ctx)
+tunnel_padding_negotiate(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 {
 	tunnel_padding_ctx_t *padding;
 
@@ -67,8 +63,7 @@ tunnel_padding_negotiate(ngx_http_request_t *r,
 		return NGX_OK;
 	}
 
-	if (ctx == NULL || ctx->padding == NULL ||
-		ctx->padding->buffer == NULL) {
+	if (ctx == NULL || ctx->padding == NULL || ctx->padding->buffer == NULL) {
 		return NGX_ERROR;
 	}
 
@@ -87,7 +82,7 @@ tunnel_padding_negotiate(ngx_http_request_t *r,
 
 ngx_int_t
 tunnel_padding_add_response_header(ngx_http_request_t *r,
-											ngx_http_tunnel_ctx_t *ctx)
+								   ngx_http_tunnel_ctx_t *ctx)
 {
 	ngx_table_elt_t *h;
 	tunnel_padding_ctx_t *padding;
@@ -140,8 +135,7 @@ tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
 }
 
 ngx_int_t
-tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx,
-									  ngx_uint_t *activity)
+tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
 	tunnel_padding_ctx_t *padding;
 	size_t n;
@@ -228,8 +222,7 @@ tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx,
 			src->pos += n;
 			padding->payload_rest -= n;
 			*activity = 1;
-			tunnel_utils_free_consumed_chain(
-				r, &ctx->downstream_chain, NULL);
+			tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
 
 			if (padding->payload_rest != 0) {
 				return NGX_OK;
@@ -248,12 +241,10 @@ tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx,
 			src->pos += n;
 			padding->discard_rest -= n;
 			*activity = 1;
-			tunnel_utils_free_consumed_chain(
-				r, &ctx->downstream_chain, NULL);
+			tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
 
 			if (padding->discard_rest == 0) {
-				tunnel_padding_complete_downstream_frame(ctx,
-																  activity);
+				tunnel_padding_complete_downstream_frame(ctx, activity);
 			}
 
 			continue;
@@ -264,8 +255,7 @@ tunnel_padding_send_upstream(ngx_http_tunnel_ctx_t *ctx,
 }
 
 ngx_int_t
-tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx,
-										ngx_uint_t *activity)
+tunnel_padding_send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
 	tunnel_padding_ctx_t *padding;
 	ngx_int_t rc;
@@ -347,6 +337,7 @@ tunnel_padding_enabled(ngx_http_request_t *r)
 
 	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
+	/* Only let HTTP2/3 support padding */
 	if (!tscf->padding || !tunnel_relay_is_stream_downstream(r)) {
 		return NGX_DECLINED;
 	}
@@ -388,9 +379,9 @@ tunnel_padding_present(ngx_http_request_t *r)
 }
 
 static ngx_int_t
-tunnel_padding_generate_response_value(
-	ngx_http_request_t *r, tunnel_padding_ctx_t *padding,
-	ngx_str_t *value)
+tunnel_padding_generate_response_value(ngx_http_request_t *r,
+									   tunnel_padding_ctx_t *padding,
+									   ngx_str_t *value)
 {
 	static u_char alphabet[] = "!#$%&'*+-.^_`|~";
 	size_t alphabet_len;
@@ -467,7 +458,7 @@ tunnel_padding_next_chain(ngx_http_request_t *r, ngx_chain_t **chain)
 
 static void
 tunnel_padding_complete_downstream_frame(ngx_http_tunnel_ctx_t *ctx,
-												  ngx_uint_t *activity)
+										 ngx_uint_t *activity)
 {
 	tunnel_padding_ctx_t *padding;
 
@@ -633,8 +624,8 @@ tunnel_padding_h2_send_rst_stream_precheck(ngx_http_request_t *r)
 }
 
 static ngx_int_t
-tunnel_padding_h2_rst_stream_data_handler(
-	ngx_http_v2_connection_t *h2c, ngx_http_v2_out_frame_t *frame)
+tunnel_padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
+										  ngx_http_v2_out_frame_t *frame)
 {
 	ngx_connection_t *fc;
 	ngx_event_t *wev;

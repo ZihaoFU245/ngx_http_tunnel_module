@@ -43,12 +43,12 @@ tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout)
 
 void
 tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
-	ngx_chain_t *limit)
+								 ngx_chain_t *limit)
 {
 	ngx_chain_t *cl;
 
 	while (*chain != limit && *chain != NULL &&
-		ngx_buf_size((*chain)->buf) == 0) {
+		   ngx_buf_size((*chain)->buf) == 0) {
 		cl = *chain;
 		*chain = cl->next;
 		ngx_free_chain(r->pool, cl);
@@ -57,7 +57,7 @@ tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
 
 ngx_uint_t
 tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r, ngx_chain_t **chain,
-	ngx_buf_t *b, size_t limit)
+								  ngx_buf_t *b, size_t limit)
 {
 	size_t n;
 	size_t size;

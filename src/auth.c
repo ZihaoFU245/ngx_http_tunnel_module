@@ -20,7 +20,7 @@ tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r)
 
 ngx_int_t
 tunnel_auth_access_denied(ngx_http_request_t *r,
-							  ngx_http_tunnel_srv_conf_t *tscf)
+						  ngx_http_tunnel_srv_conf_t *tscf)
 {
 	if (tscf->probe_resistance) {
 		ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
@@ -40,8 +40,7 @@ tunnel_auth_access_denied(ngx_http_request_t *r,
 }
 
 ngx_int_t
-tunnel_auth_check(ngx_http_request_t *r,
-						   ngx_http_tunnel_srv_conf_t *tscf)
+tunnel_auth_check(ngx_http_request_t *r, ngx_http_tunnel_srv_conf_t *tscf)
 {
 	size_t len;
 	ngx_str_t auth;

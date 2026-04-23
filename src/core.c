@@ -240,6 +240,7 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	conf->idle_timeout = NGX_CONF_UNSET_MSEC;
 	conf->probe_resistance = NGX_CONF_UNSET;
 	conf->padding = NGX_CONF_UNSET;
+	
 	conf->upstream.store = NGX_CONF_UNSET;
 	conf->upstream.store_access = NGX_CONF_UNSET_UINT;
 	conf->upstream.next_upstream_tries = NGX_CONF_UNSET_UINT;

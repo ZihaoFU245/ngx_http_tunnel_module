@@ -2,7 +2,7 @@
 
 ngx_int_t
 tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
-	ngx_http_tunnel_ctx_t *ctx)
+								  ngx_http_tunnel_ctx_t *ctx)
 {
 	if (ngx_http_upstream_create(r) != NGX_OK) {
 		return NGX_ERROR;
@@ -99,13 +99,14 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 	if (rc != NGX_OK) {
 		/*
 		 * Route every relay_start failure through tunnel_relay_finalize so
-		 * the request-body ref acquired inside tunnel_relay_v2_init_request_body
-		 * is released; otherwise ngx_http_finalize_request alone cannot bring
-		 * r->main->count to zero and the request pool leaks.
+		 * the request-body ref acquired inside
+		 * tunnel_relay_v2_init_request_body is released; otherwise
+		 * ngx_http_finalize_request alone cannot bring r->main->count to zero
+		 * and the request pool leaks.
 		 */
-		tunnel_relay_finalize(ctx,
-			rc >= NGX_HTTP_SPECIAL_RESPONSE
-				? rc : NGX_HTTP_INTERNAL_SERVER_ERROR);
+		tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
+									   ? rc
+									   : NGX_HTTP_INTERNAL_SERVER_ERROR);
 		return NGX_DONE;
 	}
 
