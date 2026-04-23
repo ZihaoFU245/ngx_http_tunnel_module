@@ -364,7 +364,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 		return NGX_OK;
 	}
 
-	return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	return NGX_DONE;
 }
 
 static ngx_int_t

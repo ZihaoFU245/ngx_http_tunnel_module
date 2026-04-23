@@ -295,6 +295,10 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 
 	tunnel_relay_close(ctx);
 
+	if (r->header_sent && rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+		rc = NGX_ERROR;
+	}
+
 	ngx_http_finalize_request(r, rc);
 }
 
