@@ -21,6 +21,11 @@ works on h2 and h3 only. HTTP/1.1 is not targeted.
 - [x] Naive Style Padding Scheme
 
 Current module build relies on a nginx patch.
+See patches, apply them to nginx source code,
+then build nginx with flag:
+`--add-module=/path/to/ngx_http_tunnel_module`
+or 
+`--add-dynamic-module=/path/to/ngx_http_tunnel_module`
 
 1. An ongoing nginx PR (https://github.com/nginx/nginx/pull/707)
 Upstream module changes is needed to apply for module HTTP/1.1
