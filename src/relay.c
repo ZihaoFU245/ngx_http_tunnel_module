@@ -293,6 +293,13 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 
 	tunnel_padding_h2_prepend_rst_stream_data(ctx);
 
+	if (rc == NGX_OK && tunnel_relay_is_stream_downstream(r) &&
+		r->header_sent &&
+		(r->http_version != NGX_HTTP_VERSION_20 ||
+		 tunnel_padding_active(ctx) != NGX_OK)) {
+		rc = ngx_http_send_special(r, NGX_HTTP_LAST);
+	}
+
 	tunnel_relay_close(ctx);
 
 	if (r->header_sent && rc >= NGX_HTTP_SPECIAL_RESPONSE) {

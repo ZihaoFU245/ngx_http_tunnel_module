@@ -13,6 +13,8 @@ static ngx_int_t send_downstream(ngx_http_tunnel_ctx_t *ctx,
 								 ngx_uint_t *activity);
 static ngx_int_t recv_upstream(ngx_http_tunnel_ctx_t *ctx,
 							   ngx_uint_t *activity);
+static ngx_int_t close_upstream_write(ngx_http_tunnel_ctx_t *ctx,
+									  ngx_uint_t upload_drained);
 static ngx_int_t send_client_buffer(ngx_http_tunnel_ctx_t *ctx,
 									ngx_uint_t *activity);
 static ngx_inline ngx_uint_t
@@ -138,6 +140,11 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 			return NGX_DONE;
 		}
 
+		rc = close_upstream_write(ctx, upload_drained);
+		if (rc != NGX_OK) {
+			return rc;
+		}
+
 		if (!loop_activity) {
 			break;
 		}
@@ -145,6 +152,11 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 
 	if (is_relay_finished(ctx, r, c, pc, &upload_drained)) {
 		return NGX_DONE;
+	}
+
+	rc = close_upstream_write(ctx, upload_drained);
+	if (rc != NGX_OK) {
+		return rc;
 	}
 
 	clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
@@ -204,6 +216,34 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 		tunnel_relay_post_downstream_read(ctx);
 		ctx->stall_wakeup_posted = 1;
 	}
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+close_upstream_write(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t upload_drained)
+{
+	ngx_connection_t *pc;
+	ngx_http_request_t *r;
+
+	if (!ctx->downstream_eof || !upload_drained || ctx->upstream_write_closed) {
+		return NGX_OK;
+	}
+
+	r = ctx->request;
+	pc = r->upstream->peer.connection;
+	if (pc == NULL || pc->write->error) {
+		return NGX_OK;
+	}
+
+	if (ngx_shutdown_socket(pc->fd, NGX_WRITE_SHUTDOWN) == -1) {
+		ngx_connection_error(pc, ngx_socket_errno,
+							 ngx_shutdown_socket_n " failed");
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	}
+
+	ctx->upstream_write_closed = 1;
+	pc->write->ready = 0;
 
 	return NGX_OK;
 }
@@ -521,7 +561,5 @@ is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
 		(ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
 		 padding_drained(ctx) && output_idle(r, c));
 
-	return ((pc->read->eof || ctx->downstream_eof) && *upload_drained &&
-			download_drained);
+	return (pc->read->eof && *upload_drained && download_drained);
 }
-

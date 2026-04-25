@@ -52,6 +52,7 @@ typedef struct {
 	unsigned 							request_body_ref_acquired : 1;
 	unsigned 							request_body_ref_released : 1;
 	unsigned 							downstream_eof : 1;
+	unsigned 							upstream_write_closed : 1;
 	unsigned 							downstream_read_posted : 1;
 	unsigned 							stall_wakeup_posted : 1;
 } ngx_http_tunnel_ctx_t;
