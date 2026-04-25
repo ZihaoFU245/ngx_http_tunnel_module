@@ -11,6 +11,12 @@
 
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 
+typedef enum {
+	NGX_HTTP_TUNNEL_ACL_NONE = 0,
+	NGX_HTTP_TUNNEL_ACL_DENY_WHITE_LIST,   /* allow set: default deny */
+	NGX_HTTP_TUNNEL_ACL_ALLOW_BLACK_LIST,  /* deny set:  default allow */
+} ngx_http_tunnel_acl_state_t;
+
 typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
@@ -21,6 +27,8 @@ typedef struct {
 	ngx_msec_t 							idle_timeout;
 	ngx_flag_t 							probe_resistance;
 	ngx_flag_t 							padding;
+	ngx_http_upstream_srv_conf_t 		*acl_allow;
+	ngx_http_upstream_srv_conf_t 		*acl_deny;
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
@@ -65,6 +73,8 @@ char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_eval(ngx_http_request_t *r);
+char *ngx_http_tunnel_acl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 ngx_int_t tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r);
 ngx_int_t tunnel_auth_access_denied(ngx_http_request_t *r,
 									ngx_http_tunnel_srv_conf_t *tscf);
@@ -131,5 +141,7 @@ void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
 ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
 											 ngx_chain_t **chain, ngx_buf_t *b,
 											 size_t limit);
+ngx_int_t tunnel_utils_addrs_equal(struct sockaddr *a, socklen_t alen,
+								   struct sockaddr *b, socklen_t blen);
 
 #endif

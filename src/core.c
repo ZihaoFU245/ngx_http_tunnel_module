@@ -61,6 +61,20 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, padding),
      NULL},
 
+    {ngx_string("tunnel_acl_allow"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+     ngx_http_tunnel_acl_set,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, acl_allow),
+     NULL},
+
+    {ngx_string("tunnel_acl_deny"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+     ngx_http_tunnel_acl_set,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, acl_deny),
+     NULL},
+
 	ngx_null_command
 };
 
@@ -317,6 +331,21 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 						   "both tunnel_auth_username and tunnel_auth_password "
 						   "must be set together");
+		return NGX_CONF_ERROR;
+	}
+
+	if (conf->acl_allow == NULL) {
+		conf->acl_allow = prev->acl_allow;
+	}
+
+	if (conf->acl_deny == NULL) {
+		conf->acl_deny = prev->acl_deny;
+	}
+
+	if (conf->acl_allow != NULL && conf->acl_deny != NULL) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+						   "tunnel_acl_allow and tunnel_acl_deny are "
+						   "mutually exclusive");
 		return NGX_CONF_ERROR;
 	}
 
