@@ -217,10 +217,9 @@ tunnel_relay_finalize_on_error(ngx_http_request_t *r,
 							   ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 {
 	/*
-	 * Error finalization path for when module context might not be available.
-	 * If ctx is provided, route through normal finalize; otherwise, attempt
-	 * to detect and release request body ref that may have been acquired but
-	 * not yet released due to early error.
+	 * Error finalization path for callbacks that lost module context.  The
+	 * normal path uses tunnel_relay_finalize(); without ctx, only clear a
+	 * possible request-body hold before handing the request back to nginx.
 	 */
 	if (ctx != NULL) {
 		tunnel_relay_finalize(ctx, rc);
@@ -228,10 +227,9 @@ tunnel_relay_finalize_on_error(ngx_http_request_t *r,
 	}
 
 	/*
-	 * ctx is NULL: check if request body ref might have been acquired
-	 * (e.g., before module took full ownership). If reading_body was set,
-	 * ngx_http_read_client_request_body likely incremented count.
-	 * Try to balance it before finalize.
+	 * This is deliberately conservative.  If the tunnel context exists it
+	 * owns the exact request-body ref flags; without it, reading_body or an
+	 * allocated request_body is the only signal available.
 	 */
 	if (r->reading_body || r->request_body != NULL) {
 		if (r->main->count > 1) {
@@ -322,10 +320,10 @@ tunnel_relay_cleanup(void *data)
 	ctx->finalized = 1;
 
 	/*
-	 * Cleanup handler called during request free. tunnel_relay_close will
-	 * properly release request body ref and close tunnel. This ensures
-	 * r->main->count reaches 0 cleanly even if tunnel_relay_finalize wasn't
-	 * called (e.g., request aborted mid-tunnel).
+	 * Cleanup runs while nginx is freeing the request.  Close peer resources
+	 * and release the request-body reference if this tunnel acquired one.
+	 * The content-handler reference is balanced in tunnel_relay_finalize();
+	 * at cleanup time nginx is already on the final request-free path.
 	 */
 	tunnel_relay_close(ctx);
 }

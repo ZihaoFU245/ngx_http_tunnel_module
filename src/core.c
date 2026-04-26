@@ -357,8 +357,25 @@ ngx_http_tunnel_init(ngx_conf_t *cf)
 {
 	ngx_http_handler_pt *h;
 	ngx_http_core_main_conf_t *cmcf;
+	ngx_http_core_srv_conf_t **cscfp;
+	ngx_http_tunnel_srv_conf_t *tscf;
+	ngx_uint_t i;
 
 	cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+
+	cscfp = cmcf->servers.elts;
+
+	for (i = 0; i < cmcf->servers.nelts; i++) {
+		tscf = cscfp[i]->ctx->srv_conf[ngx_http_tunnel_module.ctx_index];
+
+		if (tscf->enable) {
+			goto enabled;
+		}
+	}
+
+	return NGX_OK;
+
+enabled:
 
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
 	if (h == NULL) {
