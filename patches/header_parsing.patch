@@ -1,7 +1,7 @@
-From 43c594c59d475252b878b16142bf0c60bf5dfdea Mon Sep 17 00:00:00 2001
+From 70b0097f023e456c13cd89e9c258889b05e82047 Mon Sep 17 00:00:00 2001
 From: zihaofu245 <172541422+ZihaoFU245@users.noreply.github.com>
 Date: Mon, 13 Apr 2026 15:33:32 +0800
-Subject: [PATCH] Allow HTTP CONNECT method passthrough
+Subject: [PATCH 1/2] Allow HTTP CONNECT method passthrough
 
 This commit allows h2/h3 connect method to passthrough
 nginx internal request parsing. Modules can then
@@ -259,6 +259,174 @@ index 6b487289a..ebbdafbe3 100644
      if (r->method == NGX_HTTP_TRACE) {
          ngx_log_error(NGX_LOG_INFO, c->log, 0, "client sent TRACE method");
          ngx_http_finalize_request(r, NGX_HTTP_NOT_ALLOWED);
+-- 
+2.51.0
+
+From a714c9ef4466c76e3d42ec08571cc378bd8bb517 Mon Sep 17 00:00:00 2001
+From: zihaofu245 <172541422+ZihaoFU245@users.noreply.github.com>
+Date: Sat, 25 Apr 2026 16:53:57 +0800
+Subject: [PATCH 2/2] Allow Extended CONNECT to pass header parsing
+
+For classic connect method, it does not contain
+:path nor :scheme, so set it to "/" for nginx core
+to continue parsing.
+
+For extended connect, there are :path, :scheme,
+:path and :protocol. If scheme and path is provided,
+then set it to value in the icoming headers.
+:protocol header is not in nginx core. It is still
+not handled
+---
+ src/http/v2/ngx_http_v2.c         | 35 +++++++++++++++++++++++++----
+ src/http/v3/ngx_http_v3_request.c | 37 ++++++++++++++++++++++++++-----
+ 2 files changed, 62 insertions(+), 10 deletions(-)
+
+diff --git a/src/http/v2/ngx_http_v2.c b/src/http/v2/ngx_http_v2.c
+index 2f87574f7..4413fa42c 100644
+--- a/src/http/v2/ngx_http_v2.c
++++ b/src/http/v2/ngx_http_v2.c
+@@ -3572,6 +3572,7 @@ ngx_http_v2_construct_request_line(ngx_http_request_t *r)
+ {
+     size_t                    len;
+     u_char                   *p;
++    ngx_uint_t                classic_connect;
+     ngx_http_core_srv_conf_t *cscf;
+ 
+     static const u_char ending[] = " HTTP/2.0";
+@@ -3587,6 +3588,8 @@ ngx_http_v2_construct_request_line(ngx_http_request_t *r)
+         goto method_connect;
+     }
+ 
++    classic_connect = 0;
++
+     if (r->schema.len == 0) {
+         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                       "client sent no :scheme header");
+@@ -3616,14 +3619,38 @@ method_connect:
+         return NGX_ERROR;
+     }
+ 
+-    if (r->headers_in.server.len == 0) {
++    if (r->schema.len == 0 && r->unparsed_uri.len == 0) {
++        classic_connect = 1;
++
++        if (r->headers_in.server.len == 0) {
++            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
++                          "client sent no :authority header");
++            ngx_http_finalize_request(r, NGX_HTTP_BAD_REQUEST);
++            return NGX_ERROR;
++        }
++
++        len = r->headers_in.server.len;
++
++        goto construct_request_line;
++    }
++
++    classic_connect = 0;
++
++    if (r->schema.len == 0) {
+         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+-                      "client sent no :authority header");
++                      "client sent no :scheme header");
+         ngx_http_finalize_request(r, NGX_HTTP_BAD_REQUEST);
+         return NGX_ERROR;
+     }
+ 
+-    len = r->headers_in.server.len;
++    if (r->unparsed_uri.len == 0) {
++        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
++                      "client sent no :path header");
++        ngx_http_finalize_request(r, NGX_HTTP_BAD_REQUEST);
++        return NGX_ERROR;
++    }
++
++    len = r->unparsed_uri.len;
+ 
+ construct_request_line:
+ 
+@@ -3641,7 +3668,7 @@ construct_request_line:
+ 
+     *p++ = ' ';
+ 
+-    if (r->method == NGX_HTTP_CONNECT) {
++    if (classic_connect) {
+         p = ngx_cpymem(p, r->headers_in.server.data, r->headers_in.server.len);
+ 
+         r->uri_start = (u_char *) "/";
+diff --git a/src/http/v3/ngx_http_v3_request.c b/src/http/v3/ngx_http_v3_request.c
+index ebbdafbe3..0ce0083f4 100644
+--- a/src/http/v3/ngx_http_v3_request.c
++++ b/src/http/v3/ngx_http_v3_request.c
+@@ -912,6 +912,7 @@ ngx_http_v3_init_pseudo_headers(ngx_http_request_t *r)
+     size_t                    len, target_len;
+     u_char                   *p;
+     ngx_int_t                 rc;
++    ngx_uint_t                classic_connect;
+     ngx_str_t                 host;
+     ngx_http_core_srv_conf_t *cscf;
+     in_port_t   port;
+@@ -930,6 +931,8 @@ ngx_http_v3_init_pseudo_headers(ngx_http_request_t *r)
+         goto method_connect;
+     }
+ 
++    classic_connect = 0;
++
+     if (r->schema.len == 0) {
+         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                       "client sent no \":scheme\" header");
+@@ -957,16 +960,38 @@ method_connect:
+         return NGX_ERROR;
+     }
+ 
+-    if (r->host_start == NULL) {
++    if (r->schema.len == 0 && r->uri_start == NULL) {
++        classic_connect = 1;
++
++        if (r->host_start == NULL) {
++            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
++                          "client sent no \":authority\" header");
++            goto failed;
++        }
++
++        r->uri_start = (u_char *) "/";
++        r->uri_end = r->uri_start + 1;
++
++        target_len = (size_t) (r->host_end - r->host_start);
++
++        goto construct_request_line;
++    }
++
++    classic_connect = 0;
++
++    if (r->schema.len == 0) {
+         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+-                      "client sent no \":authority\" header");
++                      "client sent no \":scheme\" header");
+         goto failed;
+     }
+ 
+-    r->uri_start = (u_char *) "/";
+-    r->uri_end = r->uri_start + 1;
++    if (r->uri_start == NULL) {
++        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
++                      "client sent no \":path\" header");
++        goto failed;
++    }
+ 
+-    target_len = (size_t) (r->host_end - r->host_start);
++    target_len = (size_t) (r->uri_end - r->uri_start);
+ 
+ construct_request_line:
+ 
+@@ -983,7 +1008,7 @@ construct_request_line:
+     p = ngx_cpymem(p, r->method_name.data, r->method_name.len);
+     *p++ = ' ';
+ 
+-    if (r->method == NGX_HTTP_CONNECT) {
++    if (classic_connect) {
+         p = ngx_cpymem(p, r->host_start, target_len);
+ 
+     } else {
 -- 
 2.51.0
 

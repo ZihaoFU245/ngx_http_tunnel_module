@@ -34,7 +34,10 @@ to work.
 code for v2 and v3
 
 - [ ] Extended Connect
-- [ ] Access Control
+- [x] Access Control
+
+Basic Access control is done by using nginx upstream {...}
+directive. File based Access Control is still considering.
 ```
 
 ## Example Configuration file
