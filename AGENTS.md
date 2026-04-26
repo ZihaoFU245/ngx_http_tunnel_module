@@ -1,116 +1,94 @@
-Following edits should be limited in `src/relay_v2.c`
+# Code Style and Format
 
-Issues:
+Code style follows nginx style. There is a `.clang-format`
+file, it is recommended to use clang-format.
 
-A. `tunnel_relay_v2_process` loop is assymetric, there should be 4 helper functions,
-that can keep the main event loop clean. But there only exists 3 helper functions,
-`receive_upstream` is inlined in the loop.
+# Refactor Guide
 
-The file is currently messy, consider following improvements:
+If the request is refactoring a file:
 
-- The file only expose important function, such as `tunnel_relay_v2_process`,
-`tunnel_relay_v2_init_request_body`. For all main functions, it starts as
-`tunnel_relay_v2`. For functions that is helper functions, that must not
-start with it, for example use  `recv_downstream` instead of `tunnel_relay_v2_receive downstream`,
-the function is not used outside this file scope. It should be marked as
-static, or `ngx_inline` for helpers.
+1. Core functions that are exposed to other files should
+start with `tunnel_`
 
-- Important functions comes in the top of the files. Helper functions
-is placed at near the end of the files. 
+2. If functions are not helper functions, they must not start
+with `tunnel_`, instead it should be context specific name.
 
-- Unnecesary helper functions should be pruned, simplified. Like
-`tunnel_relay_v2_upload_padding_active` and `tunnel_padding_active`,
-2 helper functions use 2 different precheck functions. This is not clean
-and symmetric. The precheck should be unified only use `tunnel_padding_active`
-only send upstream and send dowstream requires padding, they just invoke 
-`tunnel_padding_active`, remove the other alise.
+3. In a file, core function, starts with `tunnel_` must
+appear on top. All helper function must be placed below
+core functions.
 
-- This relay should be highly symmetric.
-`recv_downstream`, `recv_upstream`, `send_downstream` and
-`send_upstream`.
+4. Helper function that are only used in current file, should
+have flags `static` or `ngx_inline` according to actual functions.
 
-- Names like `tunnel_relay_v2_recv_upstream_precheck`, is not
-easy to read. Use `recv_upstream_precheck` instead. 
+5. Help functions with `ngx_inline` that needs to be used across
+module, should be placed in header file.
 
-B. The main event loop is currently using `for (;;)`, this is busy spinning
-until the connection is closed, it disregards nginx core event archetecture.
-Eventually may leads to a systemd SIGKILL, as it disregard SIGTERM.
+6. Refactor must not change original logic and data path.
 
-- For events, such as `ngx_terminate`, `ngx_quit`, `ngx_exiting`. It should be checked
-once in a while in the loop. Define 2 things:
-`NGX_HTTP_RELAY_MAX_ITERATIONS` and `RELAY_CHECK_PERIOD`. The check period can be
-used like `if (!(i % RELAY_CHECK_PERIOD)) {check ngx shutdown events}`
+# New Feature Guide
 
-- Variable `loop_activity` should be removed. Activity is used only to track
-tunnel activities, and shut them down after a period of idle times. If using
-a hard cap for relay loop, then `loop_activity` has no meaning to keep.
+1. Must read already written files, must not edit files
+just based on search query results.
 
-C. A helper is needed to check weather the relay job is finished,
-it is used to  for post event handling. Use `is_relay_finished` for
-this helper. And do post events accordingly.
+2. Must not edit if you are unclear about the data flow
 
-D. During refactor, object lifetime needs be tracked, and invoke
-cleanup functions correctly.
+3. You must never assume. You must find concrete reason before
+editing.
 
-Refactor process:
+# New job
 
-YOUR REFACTOR PLAN GOES HERE
+Implement ACL feature for tunnel module. 
 
-1. Establish boundaries and invariants first
-- Keep all behavior in `src/relay_v2.c` functionally equivalent for data flow, timeout handling, request-body progress, and finalize/cleanup contracts.
-- Do not change nginx core, module public headers, or caller behavior outside relay-v2 integration points.
-- Preserve object lifetime invariants for `ctx`, `r`, `u`, `pc`, timers, posted events, request body refs, and finalize idempotency.
+The tunnel module is already relying on nginx http upstream
+module, so we further reuse upstream stack.
 
-2. Normalize file structure and naming
-- Keep exported functions at top: `tunnel_relay_v2_init_request_body`, `tunnel_relay_v2_process`.
-- Move internal helpers near end of file.
-- Rename internal helpers to short local names without `tunnel_relay_v2_` prefix, mark as `static`/`static ngx_inline`:
-`recv_downstream_precheck`, `recv_upstream_precheck`, `recv_downstream`, `recv_upstream`, `send_downstream`, `send_upstream`, `send_client_buffer`, `is_relay_finished`, `output_idle`, `padding_drained`.
+A. add new config directive in core, that is
+`tunnel_acl_allow` and `tunnel_acl_deny`
 
-3. Make relay operations symmetric
-- Split the inlined upstream-recv logic into a dedicated `recv_upstream(...)` helper so the main loop has four symmetric operations:
-`recv_downstream -> send_upstream -> send_downstream -> recv_upstream`.
-- Keep each helper responsible for one direction and one transport edge only.
-- Keep prechecks close to each operation and use consistent naming/shape across directions.
+They should be use like this:
 
-4. Remove redundant helper aliases
-- Delete `tunnel_relay_v2_upload_padding_active`.
-- Use `tunnel_padding_active(ctx)` directly in upstream/downstream send paths.
-- Keep padding checks consistent in both directions and avoid two-layer aliasing.
+```nginx
+upstream (allow / deny) {
+    server backend1.example.com       weight=5;
+    server backend2.example.com:8080;
+    server unix:/tmp/backend3;
 
-5. Rework main event loop to bounded pump model
-- Introduce constants:
-`#define NGX_HTTP_RELAY_MAX_ITERATIONS ...`
-`#define RELAY_CHECK_PERIOD ...`
-- Replace unbounded relay pumping intent with bounded per-callback iterations.
-- Remove `loop_activity`; keep one `activity` flag for timer refresh semantics.
-- On every `RELAY_CHECK_PERIOD` iterations, check `ngx_terminate || ngx_quit || ngx_exiting` and return `NGX_DONE` when set.
+    server backup1.example.com:8080   backup;
+    server backup2.example.com:8080   backup;
+}
+```
 
-6. Add completion helper for post-loop decision
-- Implement `is_relay_finished(ctx, r, c, pc)` helper that centralizes finish condition:
-EOF side state + upload drained + download drained (+ output idle and padding drained as needed).
-- Use this helper after the bounded loop to decide `NGX_DONE` vs `NGX_OK`.
-- Keep stall wakeup/post-event logic driven by this normalized completion status.
+We ignore the weight and backup hints. Uses upstream to help us parse
+the allow deny list.
 
-7. Preserve cleanup and lifetime guarantees during refactor
-- Ensure no early returns bypass request-body ref release path.
-- Keep timer management and event registration behavior unchanged in intent.
-- Maintain compatibility with `tunnel_relay_finalize`, `tunnel_relay_close`, posted downstream read cancellation, and cleanup handler idempotency.
+Use in tunnel config,
 
-8. Verification plan
-- Build: `make -C nginx -j4`.
-- Config smoke: run nginx test config in local writable paths.
-- Functional checks:
-  - H2 CONNECT success/relay.
-  - upstream reset (`ECONNRESET`) path exits tunnel cleanly.
-  - idle timeout path finalizes.
-  - graceful shutdown (`SIGTERM`) during active tunnel exits without prolonged worker stall.
-- Regression checks:
-  - no unexpected timer leaks.
-  - no stale posted read events.
-  - no request count/lifetime regressions.
+```nginx
+tunnel_acl_allow allowed;
+tunnel_acl_deny denied;
+```
 
-9. Delivery format
-- Keep refactor commit focused to `src/relay_v2.c` (and only minimal related declarations if strictly necessary).
-- Include before/after control-flow summary in commit message:
-asymmetric inline recv + unbounded loop -> symmetric helpers + bounded pump + periodic shutdown checks + centralized finish predicate.
+B. add a new function called, `ngx_http_tunnel_eval`. It
+is invoked in content phase. You would need to alter the order
+functions invoked in content handler. 
+
+Option1: content handler first init upstream and parse target,
+then invoke eval. Finally allocate buffer memory.
+
+Option2: Eval is invoked in process header. At this stage,
+upstream is fully done, DNS is resolved. Before tunnel
+start, we invoke eval. And of course, we don't want to
+allocate resources before eval, so in content phase we can
+register a allocation handler, allocate buffer just before
+process header invokes `tunnel_relay_start` or we can defer
+allocation after 200 is send. 
+
+Defer after 200 is send, I think is the best idea. Allocation
+takes time, we can put allocation after 200 is send, utilize
+this waiting time.
+
+If eval returned NGX_OK, it does nothing, continue request
+processing. If returned other return code, like NGX_ERROR,
+the requests should be finalized with 403, if acl not allowed.
+
+

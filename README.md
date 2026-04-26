@@ -64,6 +64,11 @@ http {
 
 	limit_conn_zone $binary_remote_addr zone=addr:50m;  # 50MB shared memory
 
+	upstream acl_list {
+		server cnn.com;
+		server youtube.com;
+	}
+
 	server {
 		listen 0.0.0.0:443 ssl;
 		listen 0.0.0.0:443 quic reuseport;
@@ -95,6 +100,16 @@ http {
         tunnel_padding off;                 # Opt in padding scheme for h2
         tunnel_connect_timeout 60s;
 		tunnel_idle_timeout 30s;
+
+		# -------------------------------
+		# Only one of the tunnel acl 
+		# directive can be set. If acl
+		# allow is configured, it is a
+		# white list. A black vice versa.
+		# -------------------------------
+
+		# tunnel_acl_allow acl_list;
+		tunnel_acl_deny acl_list;			
 
 		location / {
 		    proxy_pass https://example.com$request_uri;
