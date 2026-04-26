@@ -28,8 +28,7 @@ tunnel_utils_addrs_equal(struct sockaddr *a, socklen_t alen,
 		sin_a = (struct sockaddr_in *)a;
 		sin_b = (struct sockaddr_in *)b;
 
-		if (sin_a->sin_addr.s_addr != sin_b->sin_addr.s_addr ||
-			sin_a->sin_port != sin_b->sin_port) {
+		if (sin_a->sin_addr.s_addr != sin_b->sin_addr.s_addr) {
 			return NGX_DECLINED;
 		}
 
@@ -46,8 +45,7 @@ tunnel_utils_addrs_equal(struct sockaddr *a, socklen_t alen,
 		sin6_b = (struct sockaddr_in6 *)b;
 
 		if (ngx_memcmp(&sin6_a->sin6_addr, &sin6_b->sin6_addr,
-					   sizeof(struct in6_addr)) != 0 ||
-			sin6_a->sin6_port != sin6_b->sin6_port) {
+					   sizeof(struct in6_addr)) != 0) {
 			return NGX_DECLINED;
 		}
 

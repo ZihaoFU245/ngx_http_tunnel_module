@@ -7,18 +7,24 @@ ngx_http_tunnel_eval(ngx_http_request_t *r)
 	ngx_http_upstream_srv_conf_t *uscf;
 	ngx_http_upstream_server_t   *servers;
 	ngx_http_tunnel_acl_state_t   state;
-	ngx_connection_t             *pc;
+	ngx_peer_connection_t        *peer;
 	ngx_uint_t                    i, j, hit;
 
 	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
 	if (tscf->acl_allow != NULL) {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "tunnel ACL allow list configured");
 		state = NGX_HTTP_TUNNEL_ACL_DENY_WHITE_LIST;
 		uscf = tscf->acl_allow;
 	} else if (tscf->acl_deny != NULL) {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "tunnel ACL deny list configured");
 		state = NGX_HTTP_TUNNEL_ACL_ALLOW_BLACK_LIST;
 		uscf = tscf->acl_deny;
 	} else {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "tunnel ACL not configured");
 		return NGX_OK;
 	}
 
@@ -26,7 +32,7 @@ ngx_http_tunnel_eval(ngx_http_request_t *r)
 		return NGX_ERROR;
 	}
 
-	pc = r->upstream->peer.connection;
+	peer = &r->upstream->peer;
 
 	if (uscf->servers == NULL) {
 		return NGX_ERROR;
@@ -38,7 +44,7 @@ ngx_http_tunnel_eval(ngx_http_request_t *r)
 	for (i = 0; i < uscf->servers->nelts && !hit; i++) {
 		for (j = 0; j < servers[i].naddrs; j++) {
 			if (tunnel_utils_addrs_equal(
-					pc->sockaddr, pc->socklen, servers[i].addrs[j].sockaddr,
+					peer->sockaddr, peer->socklen, servers[i].addrs[j].sockaddr,
 					servers[i].addrs[j].socklen) == NGX_OK) {
 				hit = 1;
 				break;
