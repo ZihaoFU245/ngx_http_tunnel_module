@@ -37,7 +37,7 @@ code for v2 and v3
 - [x] Access Control
 
 Basic Access control is done by using nginx upstream {...}
-directive. File based Access Control is still considering.
+directive.
 ```
 
 ## Example Configuration file
@@ -65,11 +65,11 @@ http {
 	ssl_protocols TLSv1.2 TLSv1.3;
 	ssl_prefer_server_ciphers off;
 
-	limit_conn_zone $binary_remote_addr zone=addr:50m;  # 50MB shared memory
+	limit_conn_zone $binary_remote_addr zone=addr:1m;
 
 	upstream acl_list {
-		server cnn.com;
-		server youtube.com;
+		server fr.a2dfp.net;
+		server static.a-ads.com;
 	}
 
 	server {
@@ -81,14 +81,16 @@ http {
 		http2 on;
         http3 on;
         http3_max_concurrent_streams 128;
-        http3_stream_buffer_size 1M;
+        http3_stream_buffer_size 128k;
         quic_gso on;
 
-		limit_conn addr 50;
+		add_header Alt-Svc 'h3=":443"; ma=86400';
+
+		limit_conn addr 100;
 		limit_conn_status 429;
 
-		client_body_buffer_size 1M;
-		client_max_body_size 64M;
+		client_body_buffer_size 256k;
+		client_max_body_size 16M;
 
 		resolver 1.1.1.1 8.8.8.8;
 
@@ -96,7 +98,7 @@ http {
 		ssl_certificate_key privkey.pem;
 
 		tunnel_pass;                        # Enable tunnel module
-		tunnel_buffer_size 16M;             # Buffer size for tunnel relay 
+		tunnel_buffer_size 2M;              # Buffer size for tunnel relay 
 		tunnel_auth_username username;
 		tunnel_auth_password password;
 		tunnel_probe_resistance off;        # Used when auth is used, stop sending 407
