@@ -128,6 +128,17 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 		return rc;
 	}
 
+	rc = ngx_http_tunnel_eval(r);
+	if (rc != NGX_OK) {
+		if (rc == NGX_HTTP_BAD_REQUEST) {
+			return rc;
+		}
+
+		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+					  "tunnel ACL denied target");
+		return NGX_HTTP_FORBIDDEN;
+	}
+
 	r->content_handler = ngx_http_tunnel_content_handler;
 
 	return NGX_DECLINED;
@@ -345,6 +356,18 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 						   "tunnel_acl_allow and tunnel_acl_deny are "
 						   "mutually exclusive");
+		return NGX_CONF_ERROR;
+	}
+
+	if (conf->acl_allow != NULL &&
+		ngx_http_tunnel_acl_init(cf, conf->acl_allow, &conf->acl_allow_hash) !=
+			NGX_OK) {
+		return NGX_CONF_ERROR;
+	}
+
+	if (conf->acl_deny != NULL &&
+		ngx_http_tunnel_acl_init(cf, conf->acl_deny, &conf->acl_deny_hash) !=
+			NGX_OK) {
 		return NGX_CONF_ERROR;
 	}
 

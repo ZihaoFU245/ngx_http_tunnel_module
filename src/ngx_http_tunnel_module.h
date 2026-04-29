@@ -19,6 +19,13 @@ typedef enum {
 } ngx_http_tunnel_acl_state_t;
 
 typedef struct {
+	ngx_hash_t                          any_port;
+	ngx_hash_t                          exact_port;
+	ngx_uint_t                          any_port_nelts;
+	ngx_uint_t                          exact_port_nelts;
+} ngx_http_tunnel_acl_hash_t;
+
+typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
 	ngx_http_complex_value_t 			*proxy_auth_user_file;
@@ -30,6 +37,8 @@ typedef struct {
 	ngx_flag_t 							padding;
 	ngx_http_upstream_srv_conf_t 		*acl_allow;
 	ngx_http_upstream_srv_conf_t 		*acl_deny;
+	ngx_http_tunnel_acl_hash_t           acl_allow_hash;
+	ngx_http_tunnel_acl_hash_t           acl_deny_hash;
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
@@ -82,6 +91,10 @@ ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_eval(ngx_http_request_t *r);
+ngx_int_t ngx_http_tunnel_acl_init(ngx_conf_t *cf,
+								   ngx_http_upstream_srv_conf_t *uscf,
+								   ngx_http_tunnel_acl_hash_t *acl);
+ngx_int_t tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r);
 ngx_int_t tunnel_auth_access_denied(ngx_http_request_t *r,
 									ngx_http_tunnel_srv_conf_t *tscf);
 ngx_int_t tunnel_auth_check(ngx_http_request_t *r,

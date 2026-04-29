@@ -1,14 +1,28 @@
 #include "ngx_http_tunnel_module.h"
 
+#define NGX_HTTP_TUNNEL_ACL_VALUE ((void *)1)
+
+static ngx_int_t acl_parse_target(ngx_http_request_t *r, ngx_url_t *target);
+static ngx_int_t acl_add_rule(ngx_conf_t *cf, ngx_hash_keys_arrays_t *any_port,
+							  ngx_hash_keys_arrays_t *exact_port,
+							  ngx_str_t *name);
+static ngx_int_t acl_build_key(ngx_pool_t *pool, ngx_str_t *host,
+							   in_port_t port, ngx_uint_t any_port,
+							   ngx_str_t *key, ngx_uint_t *hash);
+static ngx_int_t acl_init_hash(ngx_conf_t *cf, ngx_hash_t *hash,
+							   ngx_hash_keys_arrays_t *keys, char *name);
+static ngx_int_t acl_target_matches(ngx_http_request_t *r,
+									ngx_http_tunnel_acl_hash_t *acl,
+									ngx_url_t *target, ngx_uint_t *hit);
+
 ngx_int_t
 ngx_http_tunnel_eval(ngx_http_request_t *r)
 {
-	ngx_http_tunnel_srv_conf_t   *tscf;
-	ngx_http_upstream_srv_conf_t *uscf;
-	ngx_http_upstream_server_t   *servers;
-	ngx_http_tunnel_acl_state_t   state;
-	ngx_peer_connection_t        *peer;
-	ngx_uint_t                    i, j, hit;
+	ngx_http_tunnel_srv_conf_t  *tscf;
+	ngx_http_tunnel_acl_hash_t  *acl;
+	ngx_http_tunnel_acl_state_t  state;
+	ngx_url_t                    target;
+	ngx_uint_t                   hit;
 
 	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
@@ -16,57 +30,24 @@ ngx_http_tunnel_eval(ngx_http_request_t *r)
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "tunnel ACL allow list configured");
 		state = NGX_HTTP_TUNNEL_ACL_DENY_WHITE_LIST;
-		uscf = tscf->acl_allow;
+		acl = &tscf->acl_allow_hash;
 	} else if (tscf->acl_deny != NULL) {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "tunnel ACL deny list configured");
 		state = NGX_HTTP_TUNNEL_ACL_ALLOW_BLACK_LIST;
-		uscf = tscf->acl_deny;
+		acl = &tscf->acl_deny_hash;
 	} else {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "tunnel ACL not configured");
 		return NGX_OK;
 	}
 
-	if (r->upstream == NULL || r->upstream->peer.connection == NULL) {
-		return NGX_ERROR;
+	if (acl_parse_target(r, &target) != NGX_OK) {
+		return NGX_HTTP_BAD_REQUEST;
 	}
 
-	peer = &r->upstream->peer;
-
-	if (uscf->servers == NULL) {
+	if (acl_target_matches(r, acl, &target, &hit) != NGX_OK) {
 		return NGX_ERROR;
-	}
-
-	hit = 0;
-	servers = uscf->servers->elts;
-
-	/*
-	 * For each server in ACL list, compare it with connect
-	 * target. The inner for loop is prepared for multiple
-	 * addresses that server name resolved. This is address
-	 * level blocking. Perhaps comparing server names is the
-	 * correct idea. Consider domain A and B both resolved
-	 * to address P. Then domain B can be blocked if domain
-	 * A is on the list. This is not good for CDN. So ACL
-	 * should as much accurate as possible.
-	 *
-	 * This is running in O(kn), for n servers and
-	 * k address resolved. k is expected to be a small number.
-	 *
-	 * It is not intended for a super large ACL list, the runtime
-	 * can behave terribly. In future, use a file for ACL and
-	 * adopt `ngx_hash_t` for O(1) time lookup.
-	 */
-	for (i = 0; i < uscf->servers->nelts && !hit; i++) {
-		for (j = 0; j < servers[i].naddrs; j++) {
-			if (tunnel_utils_addrs_equal(
-					peer->sockaddr, peer->socklen, servers[i].addrs[j].sockaddr,
-					servers[i].addrs[j].socklen) == NGX_OK) {
-				hit = 1;
-				break;
-			}
-		}
 	}
 
 	switch (state) {
@@ -112,4 +93,209 @@ ngx_http_tunnel_acl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 	*slot = uscf;
 
 	return NGX_CONF_OK;
+}
+
+ngx_int_t
+ngx_http_tunnel_acl_init(ngx_conf_t *cf, ngx_http_upstream_srv_conf_t *uscf,
+						 ngx_http_tunnel_acl_hash_t *acl)
+{
+	ngx_hash_keys_arrays_t       any_port, exact_port;
+	ngx_http_upstream_server_t  *servers;
+	ngx_uint_t                   i;
+
+	if (uscf == NULL || uscf->servers == NULL) {
+		return NGX_ERROR;
+	}
+
+	ngx_memzero(&any_port, sizeof(ngx_hash_keys_arrays_t));
+	any_port.pool = cf->pool;
+	any_port.temp_pool = cf->temp_pool;
+
+	if (ngx_hash_keys_array_init(&any_port, NGX_HASH_SMALL) != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	ngx_memzero(&exact_port, sizeof(ngx_hash_keys_arrays_t));
+	exact_port.pool = cf->pool;
+	exact_port.temp_pool = cf->temp_pool;
+
+	if (ngx_hash_keys_array_init(&exact_port, NGX_HASH_SMALL) != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	servers = uscf->servers->elts;
+
+	for (i = 0; i < uscf->servers->nelts; i++) {
+		if (acl_add_rule(cf, &any_port, &exact_port, &servers[i].name) !=
+			NGX_OK) {
+			return NGX_ERROR;
+		}
+	}
+
+	acl->any_port_nelts = any_port.keys.nelts;
+	acl->exact_port_nelts = exact_port.keys.nelts;
+
+	if (acl_init_hash(cf, &acl->any_port, &any_port,
+					  "tunnel_acl_any_port_hash") != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	if (acl_init_hash(cf, &acl->exact_port, &exact_port,
+					  "tunnel_acl_exact_port_hash") != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+acl_parse_target(ngx_http_request_t *r, ngx_url_t *target)
+{
+	ngx_str_t authority;
+
+	if (r->host_start == NULL || r->host_end == NULL) {
+		return NGX_ERROR;
+	}
+
+	authority.data = r->host_start;
+	authority.len = r->host_end - r->host_start;
+
+	ngx_memzero(target, sizeof(ngx_url_t));
+	target->url = authority;
+	target->no_resolve = 1;
+
+	if (ngx_parse_url(r->pool, target) != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	if (target->no_port) {
+		return NGX_ERROR;
+	}
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+acl_add_rule(ngx_conf_t *cf, ngx_hash_keys_arrays_t *any_port,
+			 ngx_hash_keys_arrays_t *exact_port, ngx_str_t *name)
+{
+	ngx_int_t  rc;
+	ngx_str_t  key;
+	ngx_url_t  rule;
+
+	ngx_memzero(&rule, sizeof(ngx_url_t));
+	rule.url = *name;
+	rule.no_resolve = 1;
+
+	if (ngx_parse_url(cf->pool, &rule) != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	if (acl_build_key(cf->pool, &rule.host, rule.port, rule.no_port, &key,
+					  NULL) != NGX_OK) {
+		return NGX_ERROR;
+	}
+
+	rc = ngx_hash_add_key(rule.no_port ? any_port : exact_port, &key,
+						  NGX_HTTP_TUNNEL_ACL_VALUE, 0);
+
+	if (rc == NGX_BUSY) {
+		return NGX_OK;
+	}
+
+	return rc;
+}
+
+static ngx_int_t
+acl_build_key(ngx_pool_t *pool, ngx_str_t *host, in_port_t port,
+			  ngx_uint_t any_port, ngx_str_t *key, ngx_uint_t *hash)
+{
+	u_char  *p;
+
+	key->len = host->len;
+
+	if (!any_port) {
+		key->len += NGX_INT_T_LEN + 1;
+	}
+
+	key->data = ngx_pnalloc(pool, key->len);
+	if (key->data == NULL) {
+		return NGX_ERROR;
+	}
+
+	if (hash != NULL) {
+		*hash = ngx_hash_strlow(key->data, host->data, host->len);
+
+	} else {
+		(void)ngx_hash_strlow(key->data, host->data, host->len);
+	}
+
+	if (!any_port) {
+		p = ngx_sprintf(key->data + host->len, ":%ui", (ngx_uint_t)port);
+		key->len = p - key->data;
+
+		if (hash != NULL) {
+			*hash = ngx_hash_key(key->data, key->len);
+		}
+	}
+
+	return NGX_OK;
+}
+
+static ngx_int_t
+acl_init_hash(ngx_conf_t *cf, ngx_hash_t *hash, ngx_hash_keys_arrays_t *keys,
+			  char *name)
+{
+	ngx_hash_init_t  init;
+
+	if (keys->keys.nelts == 0) {
+		return NGX_OK;
+	}
+
+	ngx_memzero(&init, sizeof(ngx_hash_init_t));
+	init.hash = hash;
+	init.key = ngx_hash_key_lc;
+	init.max_size = 10007;
+	init.bucket_size = ngx_align(512, ngx_cacheline_size);
+	init.name = name;
+	init.pool = cf->pool;
+	init.temp_pool = cf->temp_pool;
+
+	return ngx_hash_init(&init, keys->keys.elts, keys->keys.nelts);
+}
+
+static ngx_int_t
+acl_target_matches(ngx_http_request_t *r, ngx_http_tunnel_acl_hash_t *acl,
+				   ngx_url_t *target, ngx_uint_t *hit)
+{
+	ngx_str_t   key;
+	ngx_uint_t  hash;
+
+	*hit = 0;
+
+	if (acl->any_port_nelts) {
+		if (acl_build_key(r->pool, &target->host, target->port, 1, &key,
+						  &hash) != NGX_OK) {
+			return NGX_ERROR;
+		}
+
+		if (ngx_hash_find(&acl->any_port, hash, key.data, key.len) != NULL) {
+			*hit = 1;
+			return NGX_OK;
+		}
+	}
+
+	if (acl->exact_port_nelts) {
+		if (acl_build_key(r->pool, &target->host, target->port, 0, &key,
+						  &hash) != NGX_OK) {
+			return NGX_ERROR;
+		}
+
+		if (ngx_hash_find(&acl->exact_port, hash, key.data, key.len) != NULL) {
+			*hit = 1;
+			return NGX_OK;
+		}
+	}
+
+	return NGX_OK;
 }

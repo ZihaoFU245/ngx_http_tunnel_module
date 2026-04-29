@@ -74,16 +74,6 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 
 	u = r->upstream;
 
-	if (ngx_http_tunnel_eval(r) != NGX_OK) {
-		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-					  "tunnel ACL denied peer");
-		u->headers_in.status_n = NGX_HTTP_FORBIDDEN;
-		ngx_str_set(&u->headers_in.status_line, "403 Forbidden");
-		u->headers_in.content_length_n = 0;
-		u->keepalive = 0;
-		return NGX_OK;
-	}
-
 	u->headers_in.status_n = NGX_HTTP_OK;
 	ngx_str_set(&u->headers_in.status_line, "200 Connection Established");
 
