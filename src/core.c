@@ -214,6 +214,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 	u->finalize_request = tunnel_connect_finalize_request;
 
 	r->main->count++;
+	ctx->content_ref_acquired = 1;
 
 	ngx_http_upstream_init(r);
 

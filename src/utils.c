@@ -85,6 +85,28 @@ tunnel_utils_addrs_equal(struct sockaddr *a, socklen_t alen,
 }
 
 void
+tunnel_utils_release_content_ref(ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_http_request_t *r;
+
+	if (ctx == NULL || !ctx->content_ref_acquired ||
+		ctx->content_ref_released) {
+		return;
+	}
+
+	r = ctx->request;
+	if (r == NULL) {
+		return;
+	}
+
+	ctx->content_ref_released = 1;
+
+	if (r->main->count > 1) {
+		r->main->count--;
+	}
+}
+
+void
 tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx)
 {
 	ngx_http_request_t *r;

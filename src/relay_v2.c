@@ -42,6 +42,19 @@ tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx)
 		return NGX_OK;
 	}
 
+	/*
+	 * For HTTP/2/HTTP/3 CONNECT, the client may have already sent END_STREAM
+	 * before we start the non-buffered request body reader.  In that case there
+	 * is no downstream body left to read.  Avoid initializing request-body
+	 * state, otherwise nginx may allocate body buffers/handlers for a stream
+	 * that will never produce another read event causing a memory leak.
+	 */
+	if (r->stream && r->stream->in_closed) {
+		ctx->request_body_started = 1;
+		ctx->downstream_eof = 1;
+		return NGX_OK;
+	}
+
 	r->request_body_no_buffering = 1;
 	ctx->request_body_started = 1;
 	ctx->request_body_ref_acquired = 1;
@@ -237,6 +250,13 @@ close_upstream_write(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t upload_drained)
 	}
 
 	if (ngx_shutdown_socket(pc->fd, NGX_WRITE_SHUTDOWN) == -1) {
+		if (ngx_socket_errno == NGX_ENOTCONN ||
+			ngx_socket_errno == NGX_ECONNRESET) {
+			ctx->upstream_write_closed = 1;
+			pc->write->ready = 0;
+			return NGX_OK;
+		}
+
 		ngx_connection_error(pc, ngx_socket_errno,
 							 ngx_shutdown_socket_n " failed");
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -447,7 +467,7 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 	pc->read->error = 1;
 	pc->read->ready = 0;
 
-	return NGX_OK;
+	return NGX_DONE;
 }
 
 static ngx_int_t

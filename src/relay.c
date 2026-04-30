@@ -267,13 +267,9 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 	 * ngx_http_tunnel_content_handler(). The upstream module normally
 	 * balances this in ngx_http_upstream_finalize_request(), but for
 	 * stream protocols process_header returns NGX_DONE and the upstream
-	 * module just returns without running its finalize path. Without
-	 * this, the request pool survives until the H2/H3 transport
-	 * connection itself closes.
+	 * module just returns without running its finalize path.
 	 */
-	if (r->main->count > 1) {
-		r->main->count--;
-	}
+	tunnel_utils_release_content_ref(ctx);
 
 	if (tunnel_relay_is_stream_downstream(r)) {
 		/*
@@ -322,9 +318,15 @@ tunnel_relay_cleanup(void *data)
 	/*
 	 * Cleanup runs while nginx is freeing the request.  Close peer resources
 	 * and release the request-body reference if this tunnel acquired one.
-	 * The content-handler reference is balanced in tunnel_relay_finalize();
-	 * at cleanup time nginx is already on the final request-free path.
+	 * If the stream is being terminated, nginx runs cleanup before the final
+	 * close_request() count check, so the content-handler reference must be
+	 * balanced here as well.  During normal free_request() cleanup,
+	 * terminated is not set and tunnel_relay_finalize() owns the balance.
 	 */
+	if (ctx->request->main->terminated) {
+		tunnel_utils_release_content_ref(ctx);
+	}
+
 	tunnel_relay_close(ctx);
 }
 

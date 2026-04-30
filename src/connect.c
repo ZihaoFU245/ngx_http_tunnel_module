@@ -133,6 +133,27 @@ tunnel_connect_abort_request(ngx_http_request_t *r)
 void
 tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
 {
+	ngx_http_tunnel_ctx_t *ctx;
+
 	ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 				   "finalize tunnel upstream request");
+
+	ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+
+	/*
+	 * Balance the reference acquired before ngx_http_upstream_init() for
+	 * upstream-owned paths: HTTP/1 upgrade relay, ACL denial, connect errors,
+	 * and any other path where process_header did not hand control to the
+	 * stream relay with NGX_DONE.
+	 */
+	if (ctx == NULL) {
+		if (r->main->count > 1) {
+			r->main->count--;
+		}
+		return;
+	}
+
+	if (!ctx->finalized) {
+		tunnel_utils_release_content_ref(ctx);
+	}
 }
