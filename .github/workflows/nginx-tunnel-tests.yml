@@ -1,0 +1,146 @@
+name: Nginx tunnel tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      nginx_ref:
+        description: nginx branch, tag, or SHA
+        required: true
+        default: release-1.30.0
+      module_ref:
+        description: ngx_http_tunnel_module branch, tag, or SHA
+        required: true
+        default: master
+      tests_ref:
+        description: ngx_tunnel_auto_tests branch, tag, or SHA
+        required: true
+        default: master
+      tests:
+        description: Space-separated test files to run
+        required: true
+        default: h1_basic.py h2_basic.py h3_basic.py h2_padding_basic.py h2_load.py h3_load.py h2_memory_test.py h3_memory_test.py h2_padding_memory_test.py
+
+jobs:
+  build-nginx:
+    name: Build nginx with tunnel module
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpcre2-dev zlib1g-dev libssl-dev gcc make git
+
+      - name: Clone nginx
+        run: |
+          git clone --branch "${{ inputs.nginx_ref }}" --depth 1 https://github.com/nginx/nginx.git nginx
+
+      - name: Clone tunnel module
+        run: |
+          git clone --branch "${{ inputs.module_ref }}" --depth 1 https://github.com/ZihaoFU245/ngx_http_tunnel_module.git
+
+      - name: Apply nginx core patches
+        working-directory: nginx
+        run: |
+          for patch_file in ../ngx_http_tunnel_module/patches/*.patch; do
+            patch -p1 < "$patch_file"
+          done
+
+      - name: Configure nginx
+        working-directory: nginx
+        run: |
+          ./auto/configure \
+            --prefix=/usr/local/share/nginx \
+            --sbin-path=/usr/local/sbin/nginx \
+            --conf-path=/etc/nginx/nginx.conf \
+            --pid-path=/run/nginx.pid \
+            --lock-path=/var/lock/nginx.lock \
+            --error-log-path=/var/log/nginx/error.log \
+            --http-log-path=/var/log/nginx/access.log \
+            --http-client-body-temp-path=/var/lib/nginx/body \
+            --http-fastcgi-temp-path=/var/lib/nginx/fastcgi \
+            --http-proxy-temp-path=/var/lib/nginx/proxy \
+            --http-scgi-temp-path=/var/lib/nginx/scgi \
+            --http-uwsgi-temp-path=/var/lib/nginx/uwsgi \
+            --with-compat \
+            --with-threads \
+            --with-file-aio \
+            --with-pcre-jit \
+            --with-http_ssl_module \
+            --with-http_v2_module \
+            --with-http_v3_module \
+            --with-http_auth_request_module \
+            --with-http_slice_module \
+            --with-http_addition_module \
+            --with-http_gzip_static_module \
+            --with-http_random_index_module \
+            --with-http_secure_link_module \
+            --with-stream \
+            --with-cc-opt='-g -O2 -fPIC -fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=3' \
+            --with-ld-opt='-Wl,-z,relro -Wl,-z,now -fPIC' \
+            --add-module=../ngx_http_tunnel_module
+
+      - name: Make nginx
+        working-directory: nginx
+        run: make -j"$(nproc)"
+
+      - name: Upload nginx binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nginx-tunnel-binary
+          path: nginx/objs/nginx
+
+  run-tests:
+    name: Run tunnel auto tests
+    runs-on: ubuntu-latest
+    needs: build-nginx
+    timeout-minutes: 30
+
+    steps:
+      - name: Install runtime packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download nginx binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nginx-tunnel-binary
+          path: build/nginx/objs
+
+      - name: Make nginx executable
+        run: chmod +x build/nginx/objs/nginx
+
+      - name: Clone auto tests
+        run: |
+          git clone --branch "${{ inputs.tests_ref }}" --depth 1 https://github.com/ZihaoFU245/ngx_tunnel_auto_tests auto-tests
+
+      - name: Run selected tests
+        working-directory: auto-tests
+        env:
+          NGINX_TEST_REPO_ROOT: ${{ github.workspace }}/auto-tests
+          NGINX_TEST_NGINX: ${{ github.workspace }}/build/nginx/objs/nginx
+          NGINX_TEST_CERT: ${{ github.workspace }}/auto-tests/certs/example.crt
+          NGINX_TEST_KEY: ${{ github.workspace }}/auto-tests/certs/example.key
+        run: |
+          uv sync --locked
+          for test_file in ${{ inputs.tests }}; do
+            case "$test_file" in
+              h1_basic.py|h2_basic.py|h3_basic.py|h2_padding_basic.py|h2_load.py|h3_load.py|h2_memory_test.py|h3_memory_test.py|h2_padding_memory_test.py)
+                uv run python "$test_file"
+                ;;
+              *)
+                echo "unsupported test file: $test_file" >&2
+                exit 2
+                ;;
+            esac
+          done
