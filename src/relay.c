@@ -377,6 +377,11 @@ tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx)
 		tunnel_utils_clear_timer(pc->read);
 		tunnel_utils_clear_timer(pc->write);
 
+		/* A subtle memory leak if not destroyed */
+		if (pc->pool) {
+			ngx_destroy_pool(pc->pool);
+		}
+
 		ngx_close_connection(pc);
 		u->peer.connection = NULL;
 	}
