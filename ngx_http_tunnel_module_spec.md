@@ -103,8 +103,8 @@ server {
 	}
 
 	tunnel_pass;
-	tunnel_auth_username myuser;
-	tunnel_auth_password mypass;
+	tunnel_proxy_auth_user_file htpasswd;
+	tunnel_auth_failure_code 404;
 
 	tunnel_buffer_size 16k;
 	tunnel_connect_timeout 60s;
@@ -129,8 +129,8 @@ server {
 	}
 
 	tunnel_pass;
-	tunnel_auth_username myuser;
-	tunnel_auth_password mypass;
+	tunnel_proxy_auth_user_file htpasswd;
+	tunnel_auth_failure_code 404;
 	tunnel_padding on;
 
 	tunnel_buffer_size 16k;
@@ -210,12 +210,12 @@ When a valid CONNECT request is received, nginx:
 
 ---
 
-### 6.2 `tunnel_auth_username`
+### 6.2 `tunnel_proxy_auth_user_file`
 
 #### Syntax
 
 ```nginx
-tunnel_auth_username <value>;
+tunnel_proxy_auth_user_file <file>;
 ```
 
 #### Context
@@ -224,21 +224,23 @@ tunnel_auth_username <value>;
 
 #### Meaning
 
-Username expected in Basic proxy authentication for CONNECT requests.
+Apache htpasswd-compatible user file for Basic proxy authentication of CONNECT
+requests.
 
 #### Notes
 
 - Only applies to CONNECT handled by this module.
-- This is not linked to nginx `auth_basic`.
+- The file format follows nginx `auth_basic_user_file`: `user:hash[:comment]`.
+- Password verification uses nginx `ngx_crypt()`.
 
 ---
 
-### 6.3 `tunnel_auth_password`
+### 6.3 `tunnel_auth_failure_code`
 
 #### Syntax
 
 ```nginx
-tunnel_auth_password <value>;
+tunnel_auth_failure_code 400 | 403 | 404 | 405 | 407;
 ```
 
 #### Context
@@ -247,12 +249,16 @@ tunnel_auth_password <value>;
 
 #### Meaning
 
-Password expected in Basic proxy authentication for CONNECT requests.
+Status code returned when Basic proxy authentication fails and
+`tunnel_probe_resistance` is enabled.
 
 #### Notes
 
 - Only applies to CONNECT handled by this module.
-- Authentication is enabled only when both username and password are configured.
+- The default is `405`.
+- When `tunnel_probe_resistance off`, authentication failures always return
+  `407 Proxy Authentication Required` regardless of this setting.
+- `407` returns `Proxy-Authenticate`; `405` returns `Allow`.
 
 ---
 
@@ -359,7 +365,10 @@ tunnel_probe_resistance off;
 
 #### Notes
 
-When this option is enabled and authentication fails, the module should return `405 Not Allowed` instead of `407 Proxy Authentication Required`.
+When this option is disabled and authentication fails, the module must return
+`407 Proxy Authentication Required`. When this option is enabled,
+authentication failures return `tunnel_auth_failure_code`, which defaults to
+`405 Not Allowed`.
 
 This option only has meaning when proxy authentication is configured.
 
@@ -422,7 +431,8 @@ The access-phase handler must:
 - CONNECT not enabled in this server: `NGX_DECLINED`
 - CONNECT enabled and auth passes: `NGX_DECLINED` so later phase continues
 - malformed authentication header: finalize request with error
-- invalid credentials: finalize request with error, if `tunnel_probe_resistance` is set to on, it should return 405 instead of 407.
+- invalid credentials: finalize request with error; if `tunnel_probe_resistance`
+  is off, return 407; if it is on, return `tunnel_auth_failure_code`, default 405.
 
 The access handler must not interfere with normal nginx handling of non-CONNECT methods.
 
@@ -481,20 +491,25 @@ It must not use the ordinary `Authorization` header for this feature.
 
 ### 9.2 Validation model
 
-If both `tunnel_auth_username` and `tunnel_auth_password` are configured:
+If `tunnel_proxy_auth_user_file` is configured:
 
 1. require `Proxy-Authorization`
 2. require `Basic` scheme
 3. decode base64 payload
 4. parse `username:password`
-5. compare against configured credentials
+5. find the user in the configured htpasswd-compatible file
+6. verify the password with nginx `ngx_crypt()`
 
 ### 9.3 Authentication failure response
 
 When authentication fails:
 
 - if `tunnel_probe_resistance off`: return `407 Proxy Authentication Required`
-- if `tunnel_probe_resistance on`: return `405 Not Allowed`
+- if `tunnel_probe_resistance on`: return `tunnel_auth_failure_code`
+- if `tunnel_probe_resistance on` and `tunnel_auth_failure_code` is unset:
+  return `405 Not Allowed`
+- accepted `tunnel_auth_failure_code` values are `400`, `403`, `404`, `405`,
+  and `407`; any other value must fail config parsing
 
 When returning `407`, the response should include an appropriate `Proxy-Authenticate` header.
 
@@ -702,7 +717,8 @@ Recommended mapping:
 - malformed CONNECT request or malformed authority: `400 Bad Request`
 - malformed `PaddedData` frame received during padded relay: `400 Bad Request`
 - authentication required or invalid auth: `407 Proxy Authentication Required`
-- authentication failure with probe resistance enabled: `405 Not Allowed`
+- authentication failure with probe resistance enabled:
+  `tunnel_auth_failure_code`, default `405 Not Allowed`
 - DNS resolution failure: `502 Bad Gateway`
 - outbound connect refused, network unreachable, or host unreachable: `502 Bad Gateway`
 - outbound connect timeout: `504 Gateway Timeout`

@@ -12,18 +12,18 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      0,
      NULL},
 
-    {ngx_string("tunnel_auth_username"),
+    {ngx_string("tunnel_proxy_auth_user_file"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-     ngx_conf_set_str_slot,
+     ngx_http_tunnel_proxy_auth_user_file,
      NGX_HTTP_SRV_CONF_OFFSET,
-     offsetof(ngx_http_tunnel_srv_conf_t, auth_username),
+     offsetof(ngx_http_tunnel_srv_conf_t, proxy_auth_user_file),
      NULL},
 
-    {ngx_string("tunnel_auth_password"),
+    {ngx_string("tunnel_auth_failure_code"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-     ngx_conf_set_str_slot,
+     ngx_http_tunnel_auth_failure_code,
      NGX_HTTP_SRV_CONF_OFFSET,
-     offsetof(ngx_http_tunnel_srv_conf_t, auth_password),
+     offsetof(ngx_http_tunnel_srv_conf_t, auth_failure_code),
      NULL},
 
     {ngx_string("tunnel_buffer_size"),
@@ -250,6 +250,8 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	}
 
 	conf->enable = NGX_CONF_UNSET;
+	conf->proxy_auth_user_file = NGX_CONF_UNSET_PTR;
+	conf->auth_failure_code = NGX_CONF_UNSET_UINT;
 	conf->buffer_size = NGX_CONF_UNSET_SIZE;
 	conf->connect_timeout = NGX_CONF_UNSET_MSEC;
 	conf->idle_timeout = NGX_CONF_UNSET_MSEC;
@@ -279,13 +281,16 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_http_tunnel_srv_conf_t *conf = child;
 
 	ngx_conf_merge_value(conf->enable, prev->enable, 0);
-	ngx_conf_merge_str_value(conf->auth_username, prev->auth_username, "");
-	ngx_conf_merge_str_value(conf->auth_password, prev->auth_password, "");
+	ngx_conf_merge_ptr_value(conf->proxy_auth_user_file,
+							 prev->proxy_auth_user_file, NULL);
 	ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size, 16 * 1024);
 	ngx_conf_merge_msec_value(conf->connect_timeout, prev->connect_timeout,
 							  60000);
 	ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
 	ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
+	ngx_conf_merge_uint_value(conf->auth_failure_code,
+							  prev->auth_failure_code,
+							  NGX_HTTP_NOT_ALLOWED);
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
 	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
 	ngx_conf_merge_uint_value(conf->upstream.store_access,
@@ -327,13 +332,6 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 
 	conf->upstream.ignore_input = 1;
 	ngx_str_set(&conf->upstream.module, "tunnel");
-
-	if ((conf->auth_username.len == 0) != (conf->auth_password.len == 0)) {
-		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-						   "both tunnel_auth_username and tunnel_auth_password "
-						   "must be set together");
-		return NGX_CONF_ERROR;
-	}
 
 	if (conf->acl_allow == NULL) {
 		conf->acl_allow = prev->acl_allow;

@@ -3,6 +3,7 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
+#include <ngx_crypt.h>
 #include <ngx_event_connect.h>
 #include <ngx_http.h>
 #include <ngx_http_upstream.h>
@@ -20,8 +21,8 @@ typedef enum {
 typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
-	ngx_str_t 							auth_username;
-	ngx_str_t 							auth_password;
+	ngx_http_complex_value_t 			*proxy_auth_user_file;
+	ngx_uint_t 							auth_failure_code;
 	size_t 								buffer_size;
 	ngx_msec_t 							connect_timeout;
 	ngx_msec_t 							idle_timeout;
@@ -70,14 +71,17 @@ typedef struct {
 extern ngx_module_t ngx_http_tunnel_module;
 
 char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+char *ngx_http_tunnel_acl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+char *ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
+										   void *conf);
+char *ngx_http_tunnel_auth_failure_code(ngx_conf_t *cf, ngx_command_t *cmd,
+										void *conf);
 void *ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf);
 char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_eval(ngx_http_request_t *r);
-char *ngx_http_tunnel_acl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-ngx_int_t tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r);
 ngx_int_t tunnel_auth_access_denied(ngx_http_request_t *r,
 									ngx_http_tunnel_srv_conf_t *tscf);
 ngx_int_t tunnel_auth_check(ngx_http_request_t *r,

@@ -35,6 +35,8 @@ just based on search query results.
 3. You must never assume. You must find concrete reason before
 editing.
 
+4. Follow nginx code style, and follow refactor code style.
+
 # New job
 
 Implement ACL feature for tunnel module. 

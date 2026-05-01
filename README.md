@@ -97,12 +97,15 @@ http {
 		ssl_certificate  fullchain.pem;
 		ssl_certificate_key privkey.pem;
 
-		tunnel_pass;                        # Enable tunnel module
-		tunnel_buffer_size 2M;              # Buffer size for tunnel relay 
-		tunnel_auth_username username;
-		tunnel_auth_password password;
-		tunnel_probe_resistance off;        # Used when auth is used, stop sending 407
-        tunnel_padding off;                 # Opt in padding scheme for h2
+		tunnel_pass;                        	# Enable tunnel module
+		tunnel_buffer_size 2M;              	# Buffer size for tunnel relay 
+		tunnel_proxy_auth_user_file htpasswd;
+		tunnel_auth_failure_code 404;       	# 400, 403, 404, 405, or 407
+												# create an issue if you think there is need
+												# for other error code
+
+		tunnel_probe_resistance off;        	# off: auth failures always return 407
+        tunnel_padding off;                 	# Opt in padding scheme for h2/h3
         tunnel_connect_timeout 60s;
 		tunnel_idle_timeout 30s;
 
@@ -136,7 +139,7 @@ http {
 Tunnel Init Invoked
     -> Access Phase Handler
         -> Auth checking
-            -> Check tunnel_probe_resistance
+            -> Check tunnel_auth_failure_code / tunnel_probe_resistance
         -> Assign Content phase handler (Prevent other module preempt requests)
     -> Content Phase Handler
         -> Context and Buffer allocation
