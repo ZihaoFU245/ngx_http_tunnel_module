@@ -130,14 +130,14 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 
 	rc = ngx_http_tunnel_eval(r);
 	if (rc != NGX_OK) {
-		if (rc == NGX_HTTP_BAD_REQUEST) {
+		if (rc == NGX_HTTP_BAD_REQUEST || rc == NGX_HTTP_FORBIDDEN) {
 			return rc;
 		}
 
 		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
 					  "tunnel ACL denied target");
 		r->keepalive = 0;
-		return NGX_HTTP_FORBIDDEN;
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
 	r->content_handler = ngx_http_tunnel_content_handler;
@@ -425,7 +425,7 @@ ngx_http_tunnel_init(ngx_conf_t *cf)
 
 enabled:
 
-	h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
+	h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers);
 	if (h == NULL) {
 		return NGX_ERROR;
 	}

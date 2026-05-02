@@ -53,10 +53,10 @@ ngx_http_tunnel_eval(ngx_http_request_t *r)
 	switch (state) {
 
 	case NGX_HTTP_TUNNEL_ACL_DENY_WHITE_LIST:
-		return hit ? NGX_OK : NGX_ERROR;
+		return hit ? NGX_OK : NGX_HTTP_FORBIDDEN;
 
 	case NGX_HTTP_TUNNEL_ACL_ALLOW_BLACK_LIST:
-		return hit ? NGX_ERROR : NGX_OK;
+		return hit ? NGX_HTTP_FORBIDDEN : NGX_OK;
 
 	default:
 		return NGX_OK;
