@@ -136,6 +136,7 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 
 		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
 					  "tunnel ACL denied target");
+		r->keepalive = 0;
 		return NGX_HTTP_FORBIDDEN;
 	}
 
