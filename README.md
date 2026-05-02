@@ -1,15 +1,16 @@
 # Nginx HTTP Tunnel Module
 
 > [!IMPORTANT]
-> HTTP/2 performs better then HTTP/3 in throughput,
-> using http2 is more recommended. This could because
-> of a configuration, or nginx core issue. Not likely
-> to be an module issue.
+> You might find tunnel performace is limited, typically
+> in throughput. This is likely due to bad configurations.
+> A good configuration can improve performance greatly,
+> such as client max body size and kernel buffers for udp.
+
+
+**This provides a subset features of HTTP CONNECT
+over HTTP/1.1, HTTP2, and HTTP/3.**
 
 ```txt
-This provides a subset features of HTTP CONNECT
-over HTTP/1.1, HTTP2, and HTTP/3.
-
 Naive Proxy used padding scheme is implemented in here,
 works on h2 and h3 only. HTTP/1.1 is not targeted.
 
@@ -17,28 +18,50 @@ works on h2 and h3 only. HTTP/1.1 is not targeted.
 - [x] HTTP/2 CONNECT
 - [x] HTTP/3, QUIC CONNECT
 - [x] Non CONNECT method can co-exist with other HTTP methods
-- [x] Basic username, password authentication
+- [x] Proxy authentication
+- [x] Basic ACL
 - [x] Naive Style Padding Scheme
 
-Current module build relies on a nginx patch.
+Current module build relies on some nginx patches.
 See patches, apply them to nginx source code,
+try `patch -p1 < /path/to/ngx_http_tunnel_module/patches/*`
+in nginx source code folder,
 then build nginx with flag:
 `--add-module=/path/to/ngx_http_tunnel_module`
 or 
 `--add-dynamic-module=/path/to/ngx_http_tunnel_module`
 
-1. An ongoing nginx PR (https://github.com/nginx/nginx/pull/707)
-Upstream module changes is needed to apply for module HTTP/1.1
-to work.
+The patches are from nginx repo PRs.
+
+1. An ongoing [nginx PR](https://github.com/nginx/nginx/pull/707)
+provide upstream module changes.
+
 2. CONNECT needs to be allowed to pass through in Nginx
 code for v2 and v3
 
-- [ ] Extended Connect
-- [x] Access Control
+Features that are in WIP:
 
-Basic Access control is done by using nginx upstream {...}
-directive.
+- [ ] Extended Connect, including `connect-udp`
+- [ ] Improved ACL for large set of targets, currently is O(n) traversal.
 ```
+
+## Tested Nginx Versions
+
+Nginx 1.29.* should all be fine, 1.29.8 is tested.
+
+Nginx 1.30.0 is tested to work.
+
+## Implementation tricks
+
+1. It is chosen to build as a nginx module as it can reuse nginx
+core functionalities, including but not limited to, mature h2/h3
+implementation, multiplexing, limit conn, upstream module.
+
+2. This module relies on nginx upstream and http_v2, see header file.
+
+3. Because the need of padding and capsule protocol (not yet implemented),
+an intermediate buffer is required. That is, we can't simply wire upstream
+module and request, the bidirectional byte relay must be explicitly handled.
 
 ## Example Configuration file
 
@@ -99,12 +122,15 @@ http {
 
 		tunnel_pass;                        	# Enable tunnel module
 		tunnel_buffer_size 2M;              	# Buffer size for tunnel relay 
-		tunnel_proxy_auth_user_file htpasswd;
-		tunnel_auth_failure_code 404;       	# 400, 403, 404, 405, or 407
-												# create an issue if you think there is need
-												# for other error code
+		tunnel_proxy_auth_user_file /path/to/.htaccess;
 
-		tunnel_probe_resistance off;        	# off: auth failures always return 407
+		# 400, 403, 404, 405, or 407
+		# You can set custom error_page
+		tunnel_auth_failure_code 404;
+
+		# off: auth failures always return 407
+		# and ignores custom failure code
+		tunnel_probe_resistance off;
         tunnel_padding off;                 	# Opt in padding scheme for h2/h3
         tunnel_connect_timeout 60s;
 		tunnel_idle_timeout 30s;
@@ -119,6 +145,10 @@ http {
 		# tunnel_acl_allow acl_list;
 		tunnel_acl_deny acl_list;			
 
+		# location blocks are recommended to set after
+		# tunnel configurations, as tunnel module
+		# inject a precontent phase handler to skip
+		# try_files and proxy_pass directive.
 		location / {
 		    proxy_pass https://example.com$request_uri;
 		    proxy_set_header Host example.com;

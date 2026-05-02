@@ -351,6 +351,30 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	return NGX_CONF_OK;
 }
 
+/*
+ * Used to skip precontent phase, but requires tunnel_pass to
+ * be set before any location block. This is a balance between 
+ * functionality and complexity. If allow putting location block ahead,
+ * it will be complex to achieve.
+ */
+static ngx_int_t
+ngx_tunnel_skip_phase_hanlder(ngx_http_request_t *r)
+{
+	ngx_http_tunnel_srv_conf_t *tscf;
+
+	if (r->method != NGX_HTTP_CONNECT) {
+		return NGX_DECLINED;
+	}
+
+	tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+
+	if (!tscf->enable) {
+		return NGX_DECLINED;
+	}
+
+	return NGX_OK;
+}
+
 ngx_int_t
 ngx_http_tunnel_init(ngx_conf_t *cf)
 {
@@ -364,6 +388,7 @@ ngx_http_tunnel_init(ngx_conf_t *cf)
 
 	cscfp = cmcf->servers.elts;
 
+	/* Do not register handlers if no tunnel servers are enabled */
 	for (i = 0; i < cmcf->servers.nelts; i++) {
 		tscf = cscfp[i]->ctx->srv_conf[ngx_http_tunnel_module.ctx_index];
 
@@ -382,6 +407,13 @@ enabled:
 	}
 
 	*h = ngx_http_tunnel_access_handler;
+
+	h = ngx_array_push(&cmcf->phases[NGX_HTTP_PRECONTENT_PHASE].handlers);
+	if (h == NULL) {
+		return NGX_ERROR;
+	}
+
+	*h = ngx_tunnel_skip_phase_hanlder;
 
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
 	if (h == NULL) {
