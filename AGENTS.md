@@ -39,58 +39,70 @@ editing.
 
 # New job
 
-Implement ACL feature for tunnel module. 
+Read existing `acl.c` implementation, it is using upstream {...}
+directive, with an exact match style. 
 
-The tunnel module is already relying on nginx http upstream
-module, so we further reuse upstream stack.
+This new job is refactoring:
 
-A. add new config directive in core, that is
-`tunnel_acl_allow` and `tunnel_acl_deny`
+1. The old upstream {...} needs to be removed, as it is clumsy
 
-They should be use like this:
+2. Adopt nginx map directive.
+
+3. Add new variable $connect_target_host, which contains the connect target
+host:port, or sometimes only host:
+
+```log
+127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 176.58.88.183 HTTP/2.0" 499 0 "-" "-"
+127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 185.40.234.176 HTTP/2.0" 499 0 "-" "-"
+127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 208.83.233.233 HTTP/2.0" 499 0 "-" "-"
+127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 185.34.3.207 HTTP/2.0" 499 0 "-" "-"
+127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 172.237.28.183 HTTP/2.0" 499 0 "-" "-"
+127.0.0.1 - - [03/May/2026:07:01:15 +0000] "CONNECT 192.200.0.101 HTTP/2.0" 200 2533 "-" "-"
+127.0.0.1 - - [03/May/2026:07:01:17 +0000] "CONNECT 192.73.243.141 HTTP/2.0" 200 3654 "-" "-"
+127.0.0.1 - - [03/May/2026:07:01:18 +0000] "CONNECT 104.248.8.210 HTTP/2.0" 200 3400 "-" "-"
+```
+
+Some logs.
+
+4. In current version, url parsing is duplicated, in `acl.c`, function
+`acl_parse_target` it parsed and in `connect.c` function `tunnel_connect_parse_target`
+parsed again. Now in PREACCESS Phase, the target is parsed and stored in 
+`$connect_target_host` and in content phase, only check if it is non NULL.
+
+5. Add another variable called `$tunnel_acl_is_granted`, which is converted to
+ngx_uint_t, an unsigned int.
+
+0: access deny, strictly no log
+1: access granted, strictly no log
+2: access deny + ngx log
+3: access grant + ngx log
+
+A state machine switch case can be considered in implementation.
+
+Consider config:
 
 ```nginx
-upstream (allow / deny) {
-    server backend1.example.com       weight=5;
-    server backend2.example.com:8080;
-    server unix:/tmp/backend3;
+map $tunnel_target_host $tunnel_acl_is_granted {
+    hostnames;
+    default 1;
 
-    server backup1.example.com:8080   backup;
-    server backup2.example.com:8080   backup;
+    .ads.com      0;  # deny
+    .malware.com  2;  # deny + log
 }
 ```
 
-We ignore the weight and backup hints. Uses upstream to help us parse
-the allow deny list.
-
-Use in tunnel config,
+Later in a server block:
 
 ```nginx
-tunnel_acl_allow allowed;
-tunnel_acl_deny denied;
+server {
+    tunnel_pass;
+    tunnel_acl_eval_on $tunnel_acl_is_granted;
+}
 ```
 
-B. add a new function called, `ngx_http_tunnel_eval`. It
-is invoked in content phase. You would need to alter the order
-functions invoked in content handler. 
+6. This is a refactor job, so everything should be optimized to shortest
+path, no stack on top. What needs to be removed, must be removed, no warpping
+allowed.
 
-Option1: content handler first init upstream and parse target,
-then invoke eval. Finally allocate buffer memory.
-
-Option2: Eval is invoked in process header. At this stage,
-upstream is fully done, DNS is resolved. Before tunnel
-start, we invoke eval. And of course, we don't want to
-allocate resources before eval, so in content phase we can
-register a allocation handler, allocate buffer just before
-process header invokes `tunnel_relay_start` or we can defer
-allocation after 200 is send. 
-
-Defer after 200 is send, I think is the best idea. Allocation
-takes time, we can put allocation after 200 is send, utilize
-this waiting time.
-
-If eval returned NGX_OK, it does nothing, continue request
-processing. If returned other return code, like NGX_ERROR,
-the requests should be finalized with 403, if acl not allowed.
-
-
+7. This should expect a reduction is total LOC. As hash table and matching is
+handoff to nginx map structure.

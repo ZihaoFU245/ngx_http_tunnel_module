@@ -1,6 +1,6 @@
 # Nginx HTTP Tunnel Module
 
-> [!IMPORTANT]
+> [!NOTE]
 > You might find tunnel performace is limited, typically
 > in throughput. This is likely due to bad configurations.
 > A good configuration can improve performance greatly,
