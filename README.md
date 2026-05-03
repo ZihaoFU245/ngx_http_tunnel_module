@@ -39,6 +39,9 @@ provide upstream module changes.
 2. CONNECT needs to be allowed to pass through in Nginx
 code for v2 and v3
 
+Read scripts/ to find out more information about
+map based acl.
+
 Features that are in WIP:
 
 - [ ] Extended Connect, including `connect-udp`
