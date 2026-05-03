@@ -12,19 +12,6 @@
 
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 
-typedef enum {
-	NGX_HTTP_TUNNEL_ACL_NONE = 0,
-	NGX_HTTP_TUNNEL_ACL_DENY_WHITE_LIST,   /* allow set: default deny */
-	NGX_HTTP_TUNNEL_ACL_ALLOW_BLACK_LIST,  /* deny set:  default allow */
-} ngx_http_tunnel_acl_state_t;
-
-typedef struct {
-	ngx_hash_t                          any_port;
-	ngx_hash_t                          exact_port;
-	ngx_uint_t                          any_port_nelts;
-	ngx_uint_t                          exact_port_nelts;
-} ngx_http_tunnel_acl_hash_t;
-
 typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
@@ -35,10 +22,7 @@ typedef struct {
 	ngx_msec_t 							idle_timeout;
 	ngx_flag_t 							probe_resistance;
 	ngx_flag_t 							padding;
-	ngx_http_upstream_srv_conf_t 		*acl_allow;
-	ngx_http_upstream_srv_conf_t 		*acl_deny;
-	ngx_http_tunnel_acl_hash_t           acl_allow_hash;
-	ngx_http_tunnel_acl_hash_t           acl_deny_hash;
+	ngx_uint_t 							acl_eval_index;
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
@@ -80,7 +64,7 @@ typedef struct {
 extern ngx_module_t ngx_http_tunnel_module;
 
 char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
-char *ngx_http_tunnel_acl_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+char *tunnel_acl_eval_on(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
 										   void *conf);
 char *ngx_http_tunnel_auth_failure_code(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -89,11 +73,12 @@ void *ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf);
 char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
+ngx_int_t ngx_tunnel_skip_phase_hanlder(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
-ngx_int_t ngx_http_tunnel_eval(ngx_http_request_t *r);
-ngx_int_t ngx_http_tunnel_acl_init(ngx_conf_t *cf,
-								   ngx_http_upstream_srv_conf_t *uscf,
-								   ngx_http_tunnel_acl_hash_t *acl);
+ngx_int_t ngx_http_tunnel_add_variables(ngx_conf_t *cf);
+ngx_int_t tunnel_get_target_host_handler(
+	ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
+ngx_int_t tunnel_acl_eval(ngx_http_request_t *r);
 ngx_int_t tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r);
 ngx_int_t tunnel_auth_access_denied(ngx_http_request_t *r,
 									ngx_http_tunnel_srv_conf_t *tscf);
@@ -102,8 +87,8 @@ ngx_int_t tunnel_auth_check(ngx_http_request_t *r,
 
 ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
 											ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_connect_parse_target(ngx_http_request_t *r,
-									  ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t tunnel_connect_set_target(ngx_http_request_t *r,
+									ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_empty_request(ngx_http_request_t *r);
 ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
 void tunnel_connect_abort_request(ngx_http_request_t *r);

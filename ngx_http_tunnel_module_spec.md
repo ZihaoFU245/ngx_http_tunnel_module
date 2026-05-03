@@ -140,6 +140,26 @@ server {
 }
 ```
 
+### 4.4 Configuration with ACL map
+
+```nginx
+map $connect_target_host $tunnel_acl_is_granted {
+	default 1;
+
+	~(^|:)ads\.com(:|$)      0;
+	~(^|:)malware\.com(:|$)  2;
+}
+
+server {
+	listen 0.0.0.0:3128;
+
+	resolver 1.1.1.1 8.8.8.8;
+
+	tunnel_pass;
+	tunnel_acl_eval_on $tunnel_acl_is_granted;
+}
+```
+
 ---
 
 ## 5. Request model
@@ -293,7 +313,34 @@ tunnel_buffer_size 16k;
 
 ---
 
-### 6.5 `tunnel_connect_timeout`
+### 6.5 `tunnel_acl_eval_on`
+
+#### Syntax
+
+```nginx
+tunnel_acl_eval_on $variable;
+```
+
+#### Context
+
+- `server`
+
+#### Meaning
+
+Evaluates a variable for CONNECT ACL decisions. The variable is normally
+produced by nginx `map` using `$connect_target_host`, which contains the raw
+CONNECT authority exactly as provided by the client.
+
+#### Values
+
+- `0`: deny without ACL decision log
+- `1`: allow without ACL decision log
+- `2`: deny and log the ACL decision
+- `3`: allow and log the ACL decision
+
+---
+
+### 6.6 `tunnel_connect_timeout`
 
 #### Syntax
 
@@ -317,7 +364,7 @@ tunnel_connect_timeout 60s;
 
 ---
 
-### 6.6 `tunnel_idle_timeout`
+### 6.7 `tunnel_idle_timeout`
 
 #### Syntax
 
@@ -341,7 +388,7 @@ tunnel_idle_timeout 30s;
 
 ---
 
-### 6.7 `tunnel_probe_resistance`
+### 6.8 `tunnel_probe_resistance`
 
 #### Syntax
 
@@ -374,7 +421,7 @@ This option only has meaning when proxy authentication is configured.
 
 ---
 
-### 6.8 `tunnel_padding`
+### 6.9 `tunnel_padding`
 
 #### Syntax
 

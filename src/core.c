@@ -61,25 +61,18 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, padding),
      NULL},
 
-    {ngx_string("tunnel_acl_allow"),
+    {ngx_string("tunnel_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-     ngx_http_tunnel_acl_set,
+     tunnel_acl_eval_on,
      NGX_HTTP_SRV_CONF_OFFSET,
-     offsetof(ngx_http_tunnel_srv_conf_t, acl_allow),
-     NULL},
-
-    {ngx_string("tunnel_acl_deny"),
-     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-     ngx_http_tunnel_acl_set,
-     NGX_HTTP_SRV_CONF_OFFSET,
-     offsetof(ngx_http_tunnel_srv_conf_t, acl_deny),
+     0,
      NULL},
 
 	ngx_null_command
 };
 
 static ngx_http_module_t ngx_http_tunnel_module_ctx = {
-	NULL,
+	ngx_http_tunnel_add_variables,
 	ngx_http_tunnel_init,
 
 	NULL,
@@ -125,10 +118,12 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 
 	rc = tunnel_auth_check(r, tscf);
 	if (rc != NGX_OK) {
+		/* Nginx Core by default send a keepalive header */
+		r->keepalive = 0;
 		return rc;
 	}
 
-	rc = ngx_http_tunnel_eval(r);
+	rc = tunnel_acl_eval(r);
 	if (rc != NGX_OK) {
 		if (rc == NGX_HTTP_BAD_REQUEST || rc == NGX_HTTP_FORBIDDEN) {
 			return rc;
@@ -212,7 +207,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	rc = tunnel_connect_parse_target(r, ctx);
+	rc = tunnel_connect_set_target(r, ctx);
 	if (rc != NGX_OK) {
 		return rc;
 	}
@@ -269,6 +264,7 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	conf->idle_timeout = NGX_CONF_UNSET_MSEC;
 	conf->probe_resistance = NGX_CONF_UNSET;
 	conf->padding = NGX_CONF_UNSET;
+	conf->acl_eval_index = NGX_CONF_UNSET_UINT;
 	
 	conf->upstream.store = NGX_CONF_UNSET;
 	conf->upstream.store_access = NGX_CONF_UNSET_UINT;
@@ -345,34 +341,48 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	conf->upstream.ignore_input = 1;
 	ngx_str_set(&conf->upstream.module, "tunnel");
 
-	if (conf->acl_allow == NULL) {
-		conf->acl_allow = prev->acl_allow;
-	}
-
-	if (conf->acl_deny == NULL) {
-		conf->acl_deny = prev->acl_deny;
-	}
-
-	if (conf->acl_allow != NULL && conf->acl_deny != NULL) {
-		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-						   "tunnel_acl_allow and tunnel_acl_deny are "
-						   "mutually exclusive");
-		return NGX_CONF_ERROR;
-	}
-
-	if (conf->acl_allow != NULL &&
-		ngx_http_tunnel_acl_init(cf, conf->acl_allow, &conf->acl_allow_hash) !=
-			NGX_OK) {
-		return NGX_CONF_ERROR;
-	}
-
-	if (conf->acl_deny != NULL &&
-		ngx_http_tunnel_acl_init(cf, conf->acl_deny, &conf->acl_deny_hash) !=
-			NGX_OK) {
-		return NGX_CONF_ERROR;
-	}
+	ngx_conf_merge_uint_value(conf->acl_eval_index, prev->acl_eval_index,
+							  NGX_CONF_UNSET_UINT);
 
 	return NGX_CONF_OK;
+}
+
+ngx_int_t
+ngx_http_tunnel_add_variables(ngx_conf_t *cf)
+{
+	ngx_str_t              name = ngx_string("connect_target_host");
+	ngx_http_variable_t   *var;
+
+	var = ngx_http_add_variable(cf, &name, 0);
+	if (var == NULL) {
+		return NGX_ERROR;
+	}
+
+	var->get_handler = tunnel_get_target_host_handler;
+
+	return NGX_OK;
+}
+
+ngx_int_t
+tunnel_get_target_host_handler(ngx_http_request_t *r,
+											 ngx_http_variable_value_t *v,
+											 uintptr_t data)
+{
+	if (r->method != NGX_HTTP_CONNECT || r->host_start == NULL ||
+		r->host_end == NULL) {
+		v->valid = 0;
+		v->no_cacheable = 0;
+		v->not_found = 1;
+		return NGX_OK;
+	}
+
+	v->valid = 1;
+	v->no_cacheable = 0;
+	v->not_found = 0;
+	v->len = r->host_end - r->host_start;
+	v->data = r->host_start;
+
+	return NGX_OK;
 }
 
 /*
@@ -381,7 +391,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
  * functionality and complexity. If allow putting location block ahead,
  * it will be complex to achieve.
  */
-static ngx_int_t
+ngx_int_t
 ngx_tunnel_skip_phase_hanlder(ngx_http_request_t *r)
 {
 	ngx_http_tunnel_srv_conf_t *tscf;
