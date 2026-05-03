@@ -19,42 +19,20 @@ tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
 }
 
 ngx_int_t
-tunnel_connect_parse_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
+tunnel_connect_set_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 {
-	ngx_url_t url;
-	ngx_str_t authority;
 	ngx_http_upstream_resolved_t *resolved;
 
-	if (r->host_start == NULL || r->host_end == NULL) {
+	if (r->host_start == NULL || r->host_end == NULL ||
+		r->headers_in.server.len == 0) {
 		return NGX_HTTP_BAD_REQUEST;
 	}
 
-	authority.data = r->host_start;
-	authority.len = r->host_end - r->host_start;
-
-	ngx_memzero(&url, sizeof(ngx_url_t));
-	url.url = authority;
-	url.no_resolve = 1;
-
-	if (ngx_parse_url(r->pool, &url) != NGX_OK) {
-		return NGX_HTTP_BAD_REQUEST;
-	}
-
-	if (url.no_port) {
-		return NGX_HTTP_BAD_REQUEST;
-	}
-
+	/* r->upstream->resolved is ctx->resolved */
 	resolved = ctx->resolved;
-	resolved->host = url.host;
-	resolved->port = url.port;
-	resolved->no_port = 0;
-
-	if (url.naddrs == 1) {
-		resolved->naddrs = 1;
-		resolved->sockaddr = url.addrs[0].sockaddr;
-		resolved->socklen = url.addrs[0].socklen;
-		resolved->name = url.addrs[0].name;
-	}
+	resolved->host = r->headers_in.server;
+	resolved->port = r->port;
+	resolved->no_port = r->port == 0;
 
 	return NGX_OK;
 }
@@ -73,16 +51,6 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 	ngx_http_upstream_t *u;
 
 	u = r->upstream;
-
-	if (ngx_http_tunnel_eval(r) != NGX_OK) {
-		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-					  "tunnel ACL denied peer");
-		u->headers_in.status_n = NGX_HTTP_FORBIDDEN;
-		ngx_str_set(&u->headers_in.status_line, "403 Forbidden");
-		u->headers_in.content_length_n = 0;
-		u->keepalive = 0;
-		return NGX_OK;
-	}
 
 	u->headers_in.status_n = NGX_HTTP_OK;
 	ngx_str_set(&u->headers_in.status_line, "200 Connection Established");

@@ -1,6 +1,6 @@
 # Nginx HTTP Tunnel Module
 
-> [!IMPORTANT]
+> [!NOTE]
 > You might find tunnel performace is limited, typically
 > in throughput. This is likely due to bad configurations.
 > A good configuration can improve performance greatly,
@@ -19,7 +19,7 @@ works on h2 and h3 only. HTTP/1.1 is not targeted.
 - [x] HTTP/3, QUIC CONNECT
 - [x] Non CONNECT method can co-exist with other HTTP methods
 - [x] Proxy authentication
-- [x] Basic ACL
+- [x] Map based ACL
 - [x] Naive Style Padding Scheme
 
 Current module build relies on some nginx patches.
@@ -42,14 +42,13 @@ code for v2 and v3
 Features that are in WIP:
 
 - [ ] Extended Connect, including `connect-udp`
-- [ ] Improved ACL for large set of targets, currently is O(n) traversal.
 ```
 
 ## Tested Nginx Versions
 
-Nginx 1.29.* should all be fine, 1.29.8 is tested.
+- Nginx 1.29.* should all be fine, 1.29.8 is tested.
 
-Nginx 1.30.0 is tested to work.
+- Nginx 1.30.0 is tested to work.
 
 ## Implementation tricks
 
@@ -90,9 +89,28 @@ http {
 
 	limit_conn_zone $binary_remote_addr zone=addr:1m;
 
-	upstream acl_list {
-		server fr.a2dfp.net;
-		server static.a-ads.com;
+	# ---------------------------------------------
+	# A map is used in ACL for O(1) lookup,
+	# $connect_target_host variable provides raw
+	# authority header, it is your job to regex
+	# match these authority headers. Test the ACL
+	# before production, some clients put authority
+	# as raw ip, raw host, or even host:port.
+	# This can be tricky, be careful!
+	#
+	# Allowed mapping values:
+	# 0/1: deny/allow
+	# 2/3: deny/allow + logging
+	# 
+	# Example:
+	# Blocking a single hostname:
+	# ~^example\.com(:[0-9]+)?$ 
+	# --------------------------------------------
+	map $connect_target_host $is_granted {
+		default 1;								# default allow
+
+		~(^|:)fr\.a2dfp\.net(:|$)       0;		# deny
+		~(^|:)static\.a-ads\.com(:|$)   2;		# deny + log
 	}
 
 	server {
@@ -126,7 +144,8 @@ http {
 
 		# 400, 403, 404, 405, or 407
 		# You can set custom error_page
-		tunnel_auth_failure_code 404;
+		# default to 405
+		tunnel_auth_failure_code 405;
 
 		# off: auth failures always return 407
 		# and ignores custom failure code
@@ -135,20 +154,16 @@ http {
         tunnel_connect_timeout 60s;
 		tunnel_idle_timeout 30s;
 
-		# -------------------------------
-		# Only one of the tunnel acl 
-		# directive can be set. If acl
-		# allow is configured, it is a
-		# white list. A black vice versa.
-		# -------------------------------
-
-		# tunnel_acl_allow acl_list;
-		tunnel_acl_deny acl_list;			
+		# 0: deny, 1: allow, 2: deny + log, 3: allow + log.
+		# $connect_target_host is the raw CONNECT authority.
+		tunnel_acl_eval_on $is_granted;
 
 		# location blocks are recommended to set after
 		# tunnel configurations, as tunnel module
-		# inject a precontent phase handler to skip
+		# injects a precontent phase handler to skip
 		# try_files and proxy_pass directive.
+		# do not use return here, as it is in rewrite phase,
+		# it will skip tunnel handler. This is a design decision
 		location / {
 		    proxy_pass https://example.com$request_uri;
 		    proxy_set_header Host example.com;
