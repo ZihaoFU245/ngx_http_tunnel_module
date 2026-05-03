@@ -12,6 +12,14 @@
 
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 
+typedef enum {
+	UNKNOWN_PROTOCOL = 0,
+	WEBSOCKET,
+	CONNECT_UDP,
+	CONNECT_TCP,
+	CONNECT_IP,
+} ngx_http_tunnel_protocol_t; 			/* For the use of extended connect */
+
 typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
@@ -23,6 +31,8 @@ typedef struct {
 	ngx_flag_t 							probe_resistance;
 	ngx_flag_t 							padding;
 	ngx_uint_t 							acl_eval_index;
+	ngx_flag_t 							udp;
+	ngx_str_t 							udp_path;
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
@@ -94,9 +104,14 @@ ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
 void tunnel_connect_abort_request(ngx_http_request_t *r);
 void tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
 
+ngx_int_t tunnel_udp_is_request(ngx_http_request_t *r);
+ngx_int_t tunnel_udp_parse_target(ngx_http_request_t *r,
+								  ngx_http_tunnel_ctx_t *ctx);
+
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r);
 
+/* General helper function checking if request is h2 or h3 */
 static ngx_inline ngx_uint_t
 tunnel_relay_is_stream_downstream(ngx_http_request_t *r)
 {
@@ -146,5 +161,6 @@ void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
 ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
 											 ngx_chain_t **chain, ngx_buf_t *b,
 											 size_t limit);
+ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
 
 #endif

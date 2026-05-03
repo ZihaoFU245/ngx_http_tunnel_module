@@ -1,5 +1,17 @@
 #include "ngx_http_tunnel_module.h"
 
+ngx_http_tunnel_protocol_t
+tunnel_utils_match_protocol(ngx_http_request_t *r) 
+{
+	if (tunnel_udp_is_request(r) == NGX_OK) {
+		return CONNECT_UDP;
+	}
+
+	/* Other matching will go here */
+
+	return UNKNOWN_PROTOCOL;
+}
+
 void
 tunnel_utils_release_content_ref(ngx_http_tunnel_ctx_t *ctx)
 {

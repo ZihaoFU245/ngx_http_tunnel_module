@@ -7,6 +7,8 @@ if test -n "$ngx_module_link"; then
                      $ngx_addon_dir/src/acl.c \
                      $ngx_addon_dir/src/auth.c \
                      $ngx_addon_dir/src/connect.c \
+                     $ngx_addon_dir/src/udp.c \
+                     $ngx_addon_dir/src/udp_relay.c \
                      $ngx_addon_dir/src/padding.c \
                      $ngx_addon_dir/src/relay.c \
                      $ngx_addon_dir/src/relay_v2.c \
@@ -19,6 +21,8 @@ else
                    $ngx_addon_dir/src/auth.c \
                    $ngx_addon_dir/src/acl.c \
                    $ngx_addon_dir/src/connect.c \
+                   $ngx_addon_dir/src/udp.c \
+                   $ngx_addon_dir/src/udp_relay.c \
                    $ngx_addon_dir/src/padding.c \
                    $ngx_addon_dir/src/relay.c \
                    $ngx_addon_dir/src/relay_v2.c \

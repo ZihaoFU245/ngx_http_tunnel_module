@@ -61,7 +61,21 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, padding),
      NULL},
 
-    {ngx_string("tunnel_acl_eval_on"),
+    {ngx_string("tunnel_udp"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
+     ngx_conf_set_flag_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, udp),
+     NULL},
+
+    {ngx_string("tunnel_udp_path"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, udp_path),
+     NULL},
+
+	{ngx_string("tunnel_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      tunnel_acl_eval_on,
      NGX_HTTP_SRV_CONF_OFFSET,
@@ -147,6 +161,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 	ngx_http_tunnel_ctx_t *ctx;
 	ngx_http_tunnel_srv_conf_t *tscf;
 	ngx_http_upstream_t *u;
+	ngx_http_tunnel_protocol_t proto;
 
 	if (r->method != NGX_HTTP_CONNECT) {
 		return NGX_DECLINED;
@@ -173,6 +188,51 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 	}
 
 	ctx->request = r;
+
+	/* If the header contains protocol */
+	if (r->connect_protocol.len != 0) {
+		proto = tunnel_utils_match_protocol(r);
+
+		switch (proto) {
+
+		case WEBSOCKET:
+			return NGX_HTTP_NOT_IMPLEMENTED;
+
+		case CONNECT_UDP:
+			if (!tscf->udp) {
+				ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+							  "tunnel UDP is disabled");
+				return NGX_HTTP_NOT_ALLOWED;
+			}
+
+			ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
+
+			rc = tunnel_udp_parse_target(r, ctx);
+			if (rc != NGX_OK) {
+				return rc;
+			}
+
+			/* Return not implemented for now */
+			return NGX_HTTP_NOT_IMPLEMENTED;
+
+		case CONNECT_IP:
+			return NGX_HTTP_NOT_IMPLEMENTED;
+
+		case CONNECT_TCP:
+			/* Equivalent to classic connect TCP */
+			break;
+
+		case UNKNOWN_PROTOCOL:
+			/* unknown methods */
+			ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+						  "Unknown method");
+			return NGX_HTTP_BAD_REQUEST;
+
+		default:
+			/* Match Fault */
+			return NGX_HTTP_INTERNAL_SERVER_ERROR;
+		}
+	}
 
 	ctx->client_buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
 	if (ctx->client_buffer == NULL) {
@@ -265,7 +325,7 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	conf->probe_resistance = NGX_CONF_UNSET;
 	conf->padding = NGX_CONF_UNSET;
 	conf->acl_eval_index = NGX_CONF_UNSET_UINT;
-	
+	conf->udp = NGX_CONF_UNSET;
 	conf->upstream.store = NGX_CONF_UNSET;
 	conf->upstream.store_access = NGX_CONF_UNSET_UINT;
 	conf->upstream.next_upstream_tries = NGX_CONF_UNSET_UINT;
@@ -300,6 +360,9 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 							  prev->auth_failure_code,
 							  NGX_HTTP_NOT_ALLOWED);
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
+	ngx_conf_merge_value(conf->udp, prev->udp, 0);
+	ngx_conf_merge_str_value(conf->udp_path, prev->udp_path,
+							 "/.well-known/masque/udp/");
 	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
 	ngx_conf_merge_uint_value(conf->upstream.store_access,
 							  prev->upstream.store_access, 0600);
@@ -343,6 +406,14 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 
 	ngx_conf_merge_uint_value(conf->acl_eval_index, prev->acl_eval_index,
 							  NGX_CONF_UNSET_UINT);
+
+	if (conf->udp_path.len == 0 || conf->udp_path.data[0] != '/' ||
+		conf->udp_path.data[conf->udp_path.len - 1] != '/') {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+						   "tunnel_udp_path must be an absolute path prefix "
+						   "ending with \"/\"");
+		return NGX_CONF_ERROR;
+	}
 
 	return NGX_CONF_OK;
 }
