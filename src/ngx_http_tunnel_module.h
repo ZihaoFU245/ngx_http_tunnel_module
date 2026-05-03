@@ -146,7 +146,5 @@ void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
 ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
 											 ngx_chain_t **chain, ngx_buf_t *b,
 											 size_t limit);
-ngx_int_t tunnel_utils_addrs_equal(struct sockaddr *a, socklen_t alen,
-								   struct sockaddr *b, socklen_t blen);
 
 #endif
