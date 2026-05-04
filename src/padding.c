@@ -18,6 +18,7 @@ static ngx_int_t is_padding_present(ngx_http_request_t *r);
 static ngx_int_t padding_generate_response_value(ngx_http_request_t *r,
 												 tunnel_padding_ctx_t *padding,
 												 ngx_str_t *value);
+static void padding_fill_response_value(u_char *data, size_t len);
 static ngx_chain_t *padding_next_chain(ngx_http_request_t *r,
 									   ngx_chain_t **chain);
 static void padding_complete_downstream_frame(ngx_http_tunnel_ctx_t *ctx,
@@ -383,14 +384,11 @@ padding_generate_response_value(ngx_http_request_t *r,
 								tunnel_padding_ctx_t *padding,
 								ngx_str_t *value)
 {
-	static u_char alphabet[] = "!#$%&'*+-.^_`|~";
-	size_t alphabet_len;
 	ngx_uint_t attempt;
 	uint64_t hash;
 	ngx_uint_t i;
 	ngx_uint_t len;
 
-	alphabet_len = sizeof(alphabet) - 1;
 	len = NGX_HTTP_TUNNEL_PADDING_RESPONSE_MIN +
 		  (ngx_random() % (NGX_HTTP_TUNNEL_PADDING_RESPONSE_MAX -
 						   NGX_HTTP_TUNNEL_PADDING_RESPONSE_MIN + 1));
@@ -405,9 +403,9 @@ padding_generate_response_value(ngx_http_request_t *r,
 	for (attempt = 0; attempt < NGX_HTTP_TUNNEL_PADDING_RESPONSE_RETRY_MAX;
 		 attempt++) {
 		hash = NGX_HTTP_TUNNEL_FNV1A_OFFSET_BASIS;
+		padding_fill_response_value(value->data, len);
 
 		for (i = 0; i < len; i++) {
-			value->data[i] = alphabet[ngx_random() % alphabet_len];
 			hash ^= value->data[i];
 			hash *= NGX_HTTP_TUNNEL_FNV1A_PRIME;
 		}
@@ -418,12 +416,7 @@ padding_generate_response_value(ngx_http_request_t *r,
 		}
 	}
 
-	for (i = 0; i < alphabet_len; i++) {
-		if (value->data[0] == alphabet[i]) {
-			value->data[0] = alphabet[(i + 1) % alphabet_len];
-			break;
-		}
-	}
+	value->data[0] = (value->data[0] == '!') ? '"' : '!';
 
 	hash = NGX_HTTP_TUNNEL_FNV1A_OFFSET_BASIS;
 	for (i = 0; i < len; i++) {
@@ -434,6 +427,29 @@ padding_generate_response_value(ngx_http_request_t *r,
 	padding->previous_header_hash = hash;
 
 	return NGX_OK;
+}
+
+static void
+padding_fill_response_value(u_char *data, size_t len)
+{
+	static u_char codes[] = {'!', '"', '#', '$', '&', '\'', '(', ')', '*',
+							 '+', ',', ';', '<', '>',  '?',  '@', 'X'};
+	uint64_t bits;
+	size_t first;
+	size_t i;
+
+	bits = ngx_random();
+	bits = (bits << 32) | ngx_random();
+	first = ngx_min(len, (size_t)16);
+
+	for (i = 0; i < first; i++) {
+		data[i] = codes[bits & 0x0f];
+		bits >>= 4;
+	}
+
+	for (i = first; i < len; i++) {
+		data[i] = codes[16];
+	}
 }
 
 static ngx_chain_t *
@@ -498,7 +514,12 @@ padding_build_output_frame(ngx_http_tunnel_ctx_t *ctx)
 	dst->last = dst->start;
 
 	payload_size = ngx_min((size_t)(src->last - src->pos), (size_t)65535);
-	padding_size = ngx_random() % (NGX_HTTP_TUNNEL_MAX_PADDING_SIZE + 1);
+	if (payload_size < 100) {
+		padding_size = NGX_HTTP_TUNNEL_MAX_PADDING_SIZE - payload_size +
+					   (ngx_random() % (payload_size + 1));
+	} else {
+		padding_size = ngx_random() % (NGX_HTTP_TUNNEL_MAX_PADDING_SIZE + 1);
+	}
 
 	*dst->last++ = (u_char)(payload_size >> 8);
 	*dst->last++ = (u_char)payload_size;
