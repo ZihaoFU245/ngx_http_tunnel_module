@@ -104,7 +104,6 @@ server {
 
 	tunnel_pass;
 	tunnel_proxy_auth_user_file htpasswd;
-	tunnel_auth_failure_code 404;
 
 	tunnel_buffer_size 16k;
 	tunnel_connect_timeout 60s;
@@ -130,7 +129,6 @@ server {
 
 	tunnel_pass;
 	tunnel_proxy_auth_user_file htpasswd;
-	tunnel_auth_failure_code 404;
 	tunnel_padding on;
 
 	tunnel_buffer_size 16k;
@@ -252,33 +250,6 @@ requests.
 - Only applies to CONNECT handled by this module.
 - The file format follows nginx `auth_basic_user_file`: `user:hash[:comment]`.
 - Password verification uses nginx `ngx_crypt()`.
-
----
-
-### 6.3 `tunnel_auth_failure_code`
-
-#### Syntax
-
-```nginx
-tunnel_auth_failure_code 400 | 403 | 404 | 405 | 407;
-```
-
-#### Context
-
-- `server`
-
-#### Meaning
-
-Status code returned when Basic proxy authentication fails and
-`tunnel_probe_resistance` is enabled.
-
-#### Notes
-
-- Only applies to CONNECT handled by this module.
-- The default is `405`.
-- When `tunnel_probe_resistance off`, authentication failures always return
-  `407 Proxy Authentication Required` regardless of this setting.
-- `407` returns `Proxy-Authenticate`; `405` returns `Allow`.
 
 ---
 
@@ -414,14 +385,43 @@ tunnel_probe_resistance off;
 
 When this option is disabled and authentication fails, the module must return
 `407 Proxy Authentication Required`. When this option is enabled,
-authentication failures return `tunnel_auth_failure_code`, which defaults to
-`405 Not Allowed`.
+authentication failures return `405 Not Allowed`.
 
 This option only has meaning when proxy authentication is configured.
 
 ---
 
-### 6.9 `tunnel_padding`
+### 6.9 `tunnel_probe_resistance_allow_methods`
+
+#### Syntax
+
+```nginx
+tunnel_probe_resistance_allow_methods <methods>;
+```
+
+#### Context
+
+- `server`
+
+#### Meaning
+
+Sets the `Allow` response header value returned with `405 Not Allowed` when
+`tunnel_probe_resistance` is enabled and proxy authentication fails.
+
+#### Default
+
+```nginx
+tunnel_probe_resistance_allow_methods "GET, POST, HEAD, OPTIONS";
+```
+
+#### Notes
+
+- Only applies to CONNECT handled by this module.
+- Only used when `tunnel_probe_resistance on` and proxy authentication is configured.
+
+---
+
+### 6.10 `tunnel_padding`
 
 #### Syntax
 
@@ -479,7 +479,7 @@ The access-phase handler must:
 - CONNECT enabled and auth passes: `NGX_DECLINED` so later phase continues
 - malformed authentication header: finalize request with error
 - invalid credentials: finalize request with error; if `tunnel_probe_resistance`
-  is off, return 407; if it is on, return `tunnel_auth_failure_code`, default 405.
+  is off, return 407; if it is on, return 405.
 
 The access handler must not interfere with normal nginx handling of non-CONNECT methods.
 
@@ -552,13 +552,11 @@ If `tunnel_proxy_auth_user_file` is configured:
 When authentication fails:
 
 - if `tunnel_probe_resistance off`: return `407 Proxy Authentication Required`
-- if `tunnel_probe_resistance on`: return `tunnel_auth_failure_code`
-- if `tunnel_probe_resistance on` and `tunnel_auth_failure_code` is unset:
-  return `405 Not Allowed`
-- accepted `tunnel_auth_failure_code` values are `400`, `403`, `404`, `405`,
-  and `407`; any other value must fail config parsing
+- if `tunnel_probe_resistance on`: return `405 Not Allowed`
 
 When returning `407`, the response should include an appropriate `Proxy-Authenticate` header.
+When returning `405`, the response should include an `Allow` header using
+`tunnel_probe_resistance_allow_methods`.
 
 Malformed authentication header may be handled as `400 Bad Request` or `407`, but the implementation must be consistent.
 
@@ -765,7 +763,7 @@ Recommended mapping:
 - malformed `PaddedData` frame received during padded relay: `400 Bad Request`
 - authentication required or invalid auth: `407 Proxy Authentication Required`
 - authentication failure with probe resistance enabled:
-  `tunnel_auth_failure_code`, default `405 Not Allowed`
+  `405 Not Allowed`
 - DNS resolution failure: `502 Bad Gateway`
 - outbound connect refused, network unreachable, or host unreachable: `502 Bad Gateway`
 - outbound connect timeout: `504 Gateway Timeout`

@@ -1,7 +1,7 @@
 # Nginx HTTP Tunnel Module
 
 > [!NOTE]
-> You might find tunnel performace is limited, typically
+> You might find tunnel performance is limited, typically
 > in throughput. This is likely due to bad configurations.
 > A good configuration can improve performance greatly,
 > such as client max body size and kernel buffers for udp.
@@ -145,14 +145,15 @@ http {
 		tunnel_buffer_size 2M;              	# Buffer size for tunnel relay 
 		tunnel_proxy_auth_user_file /path/to/.htaccess;
 
-		# 400, 403, 404, 405, or 407
-		# You can set custom error_page
-		# default to 405
-		tunnel_auth_failure_code 405;
-
-		# off: auth failures always return 407
-		# and ignores custom failure code
+		# off: auth failures return 407
+		# on: auth failures return 405 like nginx method rejection
 		tunnel_probe_resistance off;
+
+		# 405 often comes with an allowed method header
+		# Set it based on your need
+		# Leave it empty to not emit this header at all
+		tunnel_probe_resistance_allow_methods "GET, POST, HEAD, OPTIONS";
+
         tunnel_padding off;                 	# Opt in padding scheme for h2/h3
         tunnel_connect_timeout 60s;
 		tunnel_idle_timeout 30s;
@@ -163,19 +164,20 @@ http {
 
 		# location blocks are recommended to set after
 		# tunnel configurations, as tunnel module
-		# injects a precontent phase handler to skip
+		# injects a pre-content phase handler to skip
 		# try_files and proxy_pass directive.
 		# do not use return here, as it is in rewrite phase,
-		# it will skip tunnel handler. This is a design decision
+		# it will skip tunnel handler. This is a design decision.
 		location / {
-		    proxy_pass https://example.com$request_uri;
-		    proxy_set_header Host example.com;
-		    proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-		    proxy_set_header X-Real-IP $remote_addr;
-            proxy_ssl_server_name on;
-            proxy_ssl_name example.com;
-            proxy_redirect default;
+			# A file server example
+		    root /var/www/html;
+			index index.html;
+
+			# To avoid The Discriminative Power of Cross-layer 
+			# RTTs in Fingerprinting Proxy Traffic
+			# It is recommended to either proxy_pass to a server
+			# running on the same nginx instance or
+			# run a file server here directly.
 		}
     }
 }
@@ -187,7 +189,7 @@ http {
 Tunnel Init Invoked
     -> Access Phase Handler
         -> Auth checking
-            -> Check tunnel_auth_failure_code / tunnel_probe_resistance
+            -> Check tunnel_probe_resistance
         -> Assign Content phase handler (Prevent other module preempt requests)
     -> Content Phase Handler
         -> Context and Buffer allocation

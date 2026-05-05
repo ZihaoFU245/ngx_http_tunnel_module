@@ -1,3 +1,9 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ */
+
+
 #include "ngx_http_tunnel_module.h"
 
 ngx_int_t

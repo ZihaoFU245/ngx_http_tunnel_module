@@ -1,3 +1,25 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ *
+ * Auth module mimics nginx core auth behaviour.
+ * See `nginx/src/http/modules/ngx_http_auth*`.
+ *
+ * TODO: Watch nginx upstream changes, on nginx 1.31.*
+ * roadmap, Proxy_Authenticate will be supported and we can
+ * then eliminate it from this module. Probe resistance
+ * behaviour can be done via $auth_status. We can add a helper
+ * function to avoid user config, that basically does:
+ * 
+ * if ($auth_status = 405) {
+ *      add_header Allow "GET, POST, HEAD" always;
+ *       return 405 "Method Not Allowed";
+ * }
+ * 
+ * No need to manually handle file descriptor anymore.
+ */
+
+
 #include "ngx_http_tunnel_module.h"
 
 #define NGX_HTTP_TUNNEL_AUTH_BUF_SIZE  2048
@@ -14,8 +36,7 @@ tunnel_auth_access_denied(ngx_http_request_t *r,
 						  ngx_http_tunnel_srv_conf_t *tscf)
 {
 	/* 407 */
-	if (!tscf->probe_resistance ||
-		tscf->auth_failure_code == NGX_HTTP_PROXY_AUTH_REQUIRED) {
+	if (!tscf->probe_resistance) {
 
 		static ngx_str_t realm = ngx_string("Basic realm=\"proxy\"");
 
@@ -35,7 +56,7 @@ tunnel_auth_access_denied(ngx_http_request_t *r,
 	}
 
 	/* 405 */
-	if (tscf->auth_failure_code == NGX_HTTP_NOT_ALLOWED) {
+	if (tscf->probe_resistance_allow_methods.len != 0) {
 		ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
 		if (h == NULL) {
 			return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -44,13 +65,10 @@ tunnel_auth_access_denied(ngx_http_request_t *r,
 		h->hash = 1;
 		h->next = NULL;
 		ngx_str_set(&h->key, "Allow");
-		ngx_str_set(&h->value, "GET, POST, HEAD, OPTIONS");
-
-		return NGX_HTTP_NOT_ALLOWED;
+		h->value = tscf->probe_resistance_allow_methods;
 	}
-
-	/* For other deny code, you can set a custom error_page */
-	return tscf->auth_failure_code;
+	
+	return NGX_HTTP_NOT_ALLOWED;
 }
 
 ngx_int_t
@@ -370,47 +388,6 @@ ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
 	if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
 		return NGX_CONF_ERROR;
 	}
-
-	return NGX_CONF_OK;
-}
-
-char *
-ngx_http_tunnel_auth_failure_code(ngx_conf_t *cf, ngx_command_t *cmd,
-								  void *conf)
-{
-	ngx_http_tunnel_srv_conf_t *tscf = conf;
-	ngx_int_t code;
-	ngx_str_t *value;
-
-	if (tscf->auth_failure_code != NGX_CONF_UNSET_UINT) {
-		return "is duplicate";
-	}
-
-	value = cf->args->elts;
-	code = ngx_atoi(value[1].data, value[1].len);
-	if (code == NGX_ERROR) {
-		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-						   "Error code must be a number \"%V\"", &value[1]);
-		return NGX_CONF_ERROR;
-	}
-
-	switch (code) {
-	case NGX_HTTP_BAD_REQUEST:
-	case NGX_HTTP_FORBIDDEN:
-	case NGX_HTTP_NOT_FOUND:
-	case NGX_HTTP_NOT_ALLOWED:
-	case NGX_HTTP_PROXY_AUTH_REQUIRED:
-		break;
-
-	default:
-		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-						   "invalid tunnel_auth_failure_code \"%V\", "
-						   "it must be one of 400, 403, 404, 405, 407",
-						   &value[1]);
-		return NGX_CONF_ERROR;
-	}
-
-	tscf->auth_failure_code = code;
 
 	return NGX_CONF_OK;
 }

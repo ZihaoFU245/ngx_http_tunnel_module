@@ -1,6 +1,16 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ * 
+ * Bidirectional byte relay for client and upstream
+ * 
+ */
+
+
 #include "ngx_http_tunnel_module.h"
 
 /* Bound relay work per callback to keep nginx event loop responsive. */
+/* TODO: Should this be a user configurable config? */
 #define NGX_HTTP_RELAY_MAX_ITERATIONS 64
 #define RELAY_CHECK_PERIOD 8
 
@@ -110,6 +120,10 @@ tunnel_relay_v2_process(ngx_http_tunnel_ctx_t *ctx)
 	for (i = 0; i < NGX_HTTP_RELAY_MAX_ITERATIONS; i++) {
 		loop_activity = 0;
 
+		/*
+		 * If we don't return back to event loop on time,
+		 * systemd might signal a SIGKILL.
+		 */
 		if ((i % RELAY_CHECK_PERIOD) == 0 &&
 			(ngx_terminate || ngx_quit || ngx_exiting)) {
 			return NGX_DONE;

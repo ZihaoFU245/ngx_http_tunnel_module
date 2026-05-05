@@ -19,13 +19,6 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, proxy_auth_user_file),
      NULL},
 
-    {ngx_string("tunnel_auth_failure_code"),
-     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
-     ngx_http_tunnel_auth_failure_code,
-     NGX_HTTP_SRV_CONF_OFFSET,
-     offsetof(ngx_http_tunnel_srv_conf_t, auth_failure_code),
-     NULL},
-
     {ngx_string("tunnel_buffer_size"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_size_slot,
@@ -52,6 +45,13 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      ngx_conf_set_flag_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, probe_resistance),
+     NULL},
+
+    {ngx_string("tunnel_probe_resistance_allow_methods"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, probe_resistance_allow_methods),
      NULL},
 
     {ngx_string("tunnel_padding"),
@@ -258,7 +258,6 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 
 	conf->enable = NGX_CONF_UNSET;
 	conf->proxy_auth_user_file = NGX_CONF_UNSET_PTR;
-	conf->auth_failure_code = NGX_CONF_UNSET_UINT;
 	conf->buffer_size = NGX_CONF_UNSET_SIZE;
 	conf->connect_timeout = NGX_CONF_UNSET_MSEC;
 	conf->idle_timeout = NGX_CONF_UNSET_MSEC;
@@ -296,9 +295,9 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 							  60000);
 	ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
 	ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
-	ngx_conf_merge_uint_value(conf->auth_failure_code,
-							  prev->auth_failure_code,
-							  NGX_HTTP_NOT_ALLOWED);
+	ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
+							 prev->probe_resistance_allow_methods,
+							 "GET, POST, HEAD, OPTIONS");
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
 	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
 	ngx_conf_merge_uint_value(conf->upstream.store_access,
@@ -347,6 +346,12 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	return NGX_CONF_OK;
 }
 
+/*
+ * Add $connect_target_host is necessary
+ * Though $request_uri provides the raw
+ * authority header, but it only applys to
+ * h2/h3 stream. HTTP/1.1 will miss.
+ */
 ngx_int_t
 ngx_http_tunnel_add_variables(ngx_conf_t *cf)
 {
@@ -392,7 +397,7 @@ tunnel_get_target_host_handler(ngx_http_request_t *r,
  * it will be complex to achieve.
  */
 ngx_int_t
-ngx_tunnel_skip_phase_hanlder(ngx_http_request_t *r)
+ngx_tunnel_skip_phase_handler(ngx_http_request_t *r)
 {
 	ngx_http_tunnel_srv_conf_t *tscf;
 
@@ -447,7 +452,7 @@ enabled:
 		return NGX_ERROR;
 	}
 
-	*h = ngx_tunnel_skip_phase_hanlder;
+	*h = ngx_tunnel_skip_phase_handler;
 
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
 	if (h == NULL) {

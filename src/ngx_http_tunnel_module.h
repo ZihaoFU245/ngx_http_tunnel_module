@@ -1,3 +1,9 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ */
+
+
 #ifndef _NGX_HTTP_TUNNEL_MODULE_H_INCLUDED_
 #define _NGX_HTTP_TUNNEL_MODULE_H_INCLUDED_
 
@@ -16,7 +22,7 @@ typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
 	ngx_http_complex_value_t 			*proxy_auth_user_file;
-	ngx_uint_t 							auth_failure_code;
+	ngx_str_t 							probe_resistance_allow_methods;
 	size_t 								buffer_size;
 	ngx_msec_t 							connect_timeout;
 	ngx_msec_t 							idle_timeout;
@@ -67,13 +73,11 @@ char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *tunnel_acl_eval_on(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
 										   void *conf);
-char *ngx_http_tunnel_auth_failure_code(ngx_conf_t *cf, ngx_command_t *cmd,
-										void *conf);
 void *ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf);
 char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
-ngx_int_t ngx_tunnel_skip_phase_hanlder(ngx_http_request_t *r);
+ngx_int_t ngx_tunnel_skip_phase_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_content_handler(ngx_http_request_t *r);
 ngx_int_t ngx_http_tunnel_add_variables(ngx_conf_t *cf);
 ngx_int_t tunnel_get_target_host_handler(

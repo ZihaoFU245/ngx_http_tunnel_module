@@ -1,3 +1,9 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ */
+
+
 #include "ngx_http_tunnel_module.h"
 
 static ngx_int_t acl_parse_state(ngx_http_request_t *r,

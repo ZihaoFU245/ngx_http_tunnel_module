@@ -1,3 +1,12 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ * 
+ * Padding protocol defined by naiveproxy
+ * 
+ */
+
+
 #include "ngx_http_tunnel_module.h"
 
 #define NGX_HTTP_TUNNEL_PADDING_RESPONSE_MIN 30
