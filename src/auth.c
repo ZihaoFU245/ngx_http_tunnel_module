@@ -12,7 +12,6 @@
  * function to avoid user config, that basically does:
  * 
  * if ($auth_status = 405) {
- *      add_header Allow "GET, POST, HEAD" always;
  *       return 405 "Method Not Allowed";
  * }
  * 

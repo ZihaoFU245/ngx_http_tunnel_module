@@ -297,7 +297,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
 	ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
 							 prev->probe_resistance_allow_methods,
-							 "GET, POST, HEAD, OPTIONS");
+							 "");
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
 	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
 	ngx_conf_merge_uint_value(conf->upstream.store_access,

@@ -149,10 +149,9 @@ http {
 		# on: auth failures return 405 like nginx method rejection
 		tunnel_probe_resistance off;
 
-		# 405 often comes with an allowed method header
-		# Set it based on your need
-		# Leave it empty to not emit this header at all
-		tunnel_probe_resistance_allow_methods "GET, POST, HEAD, OPTIONS";
+		# Empty by default, matching nginx core CONNECT rejection:
+		# Set this unless you know what you are doing
+		tunnel_probe_resistance_allow_methods "";
 
         tunnel_padding off;                 	# Opt in padding scheme for h2/h3
         tunnel_connect_timeout 60s;

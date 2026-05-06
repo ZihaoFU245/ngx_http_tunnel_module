@@ -405,17 +405,20 @@ tunnel_probe_resistance_allow_methods <methods>;
 
 #### Meaning
 
-Sets the `Allow` response header value returned with `405 Not Allowed` when
-`tunnel_probe_resistance` is enabled and proxy authentication fails.
+Optionally sets the `Allow` response header value returned with
+`405 Not Allowed` when `tunnel_probe_resistance` is enabled and proxy
+authentication fails.
 
 #### Default
 
 ```nginx
-tunnel_probe_resistance_allow_methods "GET, POST, HEAD, OPTIONS";
+tunnel_probe_resistance_allow_methods "";
 ```
 
 #### Notes
 
+- Empty by default to match nginx core CONNECT rejection; no `Allow` header is
+  emitted unless this directive is explicitly set to a non-empty value.
 - Only applies to CONNECT handled by this module.
 - Only used when `tunnel_probe_resistance on` and proxy authentication is configured.
 
@@ -555,8 +558,8 @@ When authentication fails:
 - if `tunnel_probe_resistance on`: return `405 Not Allowed`
 
 When returning `407`, the response should include an appropriate `Proxy-Authenticate` header.
-When returning `405`, the response should include an `Allow` header using
-`tunnel_probe_resistance_allow_methods`.
+When returning `405`, the response includes an `Allow` header only when
+`tunnel_probe_resistance_allow_methods` is configured to a non-empty value.
 
 Malformed authentication header may be handled as `400 Bad Request` or `407`, but the implementation must be consistent.
 
