@@ -31,14 +31,19 @@ static ngx_inline ngx_uint_t
 recv_downstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx);
 static ngx_inline ngx_uint_t padding_drained(ngx_http_tunnel_ctx_t *ctx);
-static ngx_inline ngx_uint_t output_idle(ngx_http_request_t *r,
-										 ngx_connection_t *c);
+static ngx_inline ngx_uint_t downstream_output_pending(ngx_http_request_t *r,
+													   ngx_connection_t *c);
+static ngx_inline ngx_uint_t downstream_buffer_reusable(ngx_http_request_t *r,
+														ngx_connection_t *c);
+static ngx_inline ngx_uint_t downstream_transport_idle(ngx_http_request_t *r,
+													   ngx_connection_t *c);
+static ngx_inline ngx_uint_t upstream_recv_allowed(ngx_http_tunnel_ctx_t *ctx,
+												  ngx_http_request_t *r);
 static ngx_inline ngx_uint_t is_relay_finished(ngx_http_tunnel_ctx_t *ctx,
 											   ngx_http_request_t *r,
 											   ngx_connection_t *c,
 											   ngx_connection_t *pc,
 											   ngx_uint_t *upload_drained);
-
 
 ngx_int_t
 tunnel_relay_v2_init_request_body(ngx_http_tunnel_ctx_t *ctx)
@@ -398,7 +403,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 		}
 	}
 
-	if (b->pos == b->last && r->out == NULL && !r->buffered && !c->buffered) {
+	if (b->pos == b->last && !downstream_output_pending(r, c)) {
 		return NGX_OK;
 	}
 
@@ -408,7 +413,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 	before_r_buffered = r->buffered;
 	before_c_buffered = c->buffered;
 
-	if (r->out != NULL || r->buffered || c->buffered) {
+	if (downstream_output_pending(r, c)) {
 		rc = ngx_http_output_filter(r, NULL);
 	} else {
 		out.buf = b;
@@ -423,7 +428,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 		return NGX_DONE;
 	}
 
-	if (b->pos == b->last && r->out == NULL && !r->buffered && !c->buffered) {
+	if (b->pos == b->last && downstream_buffer_reusable(r, c)) {
 		b->pos = b->start;
 		b->last = b->start;
 	}
@@ -552,19 +557,10 @@ recv_upstream_precheck(ngx_http_tunnel_ctx_t *ctx)
 		return 0;
 	}
 
-	/*
-	 * Historically this also required output_idle (r->out == NULL &&
-	 * !r->buffered && !c->buffered). That gate starved H3 download: QUIC
-	 * keeps c->buffered set while frames sit in its internal queue, so the
-	 * precheck could never pass and no further upstream bytes were pulled.
-	 *
-	 * Dropping the output_idle condition is safe because upstream_buffer
-	 * reuse is already guarded: the send path only rewinds the buffer when
-	 * r->out == NULL && !r->buffered && !c->buffered (see
-	 * send_downstream below), so the filter cannot still reference bytes
-	 * past b->last. Bytes written by this recv land at b->last..b->end,
-	 * which the filter has not observed.
-	 */
+	if (!upstream_recv_allowed(ctx, r)) {
+		return 0;
+	}
+
 	return 1;
 }
 
@@ -576,9 +572,56 @@ padding_drained(ngx_http_tunnel_ctx_t *ctx)
 }
 
 static ngx_inline ngx_uint_t
-output_idle(ngx_http_request_t *r, ngx_connection_t *c)
+downstream_output_pending(ngx_http_request_t *r, ngx_connection_t *c)
+{
+	return r->out != NULL || r->buffered ||
+		   (r->http_version == NGX_HTTP_VERSION_20 &&
+			(c->buffered & NGX_HTTP_V2_BUFFERED));
+}
+
+static ngx_inline ngx_uint_t
+downstream_buffer_reusable(ngx_http_request_t *r, ngx_connection_t *c)
+{
+	/*
+	 * HTTP/2 DATA frames keep ngx_chain_t entries that either point at the
+	 * caller's ngx_buf_t or at shadow buffers whose memory range belongs to
+	 * it.  While NGX_HTTP_V2_BUFFERED is set, extending or rewinding the
+	 * relay buffer can corrupt the queued frame's view of the bytes.
+	 *
+	 * HTTP/3/QUIC copies stream bytes into its own send buffer before the
+	 * write filter releases r->out, so low-level transport buffering does
+	 * not keep ownership of this relay buffer.
+	 */
+	return r->out == NULL && !r->buffered &&
+		   (r->http_version != NGX_HTTP_VERSION_20 ||
+			!(c->buffered & NGX_HTTP_V2_BUFFERED));
+}
+
+static ngx_inline ngx_uint_t
+downstream_transport_idle(ngx_http_request_t *r, ngx_connection_t *c)
 {
 	return r->out == NULL && !r->buffered && !c->buffered;
+}
+
+static ngx_inline ngx_uint_t
+upstream_recv_allowed(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r)
+{
+	tunnel_padding_ctx_t *padding;
+
+	/*
+	 * During the initial padded download frames, upstream bytes are copied
+	 * from upstream_buffer into padding->buffer before entering the HTTP/2
+	 * output queue.  In that mode NGX_HTTP_V2_BUFFERED protects the padding
+	 * buffer, not upstream_buffer, and tunnel_padding_send_downstream()
+	 * already prevents padding->buffer reuse while output_active is set.
+	 */
+	padding = ctx->padding;
+	if (padding != NULL &&
+		padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
+		return 1;
+	}
+
+	return downstream_buffer_reusable(r, r->connection);
 }
 
 static ngx_inline ngx_uint_t
@@ -593,7 +636,7 @@ is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
 
 	download_drained =
 		(ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
-		 padding_drained(ctx) && output_idle(r, c));
+		 padding_drained(ctx) && downstream_transport_idle(r, c));
 
 	return (pc->read->eof && *upload_drained && download_drained);
 }
