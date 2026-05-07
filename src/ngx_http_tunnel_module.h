@@ -18,6 +18,30 @@
 
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 
+#define CAPSULE_DATAGRAM 0x00
+#define CAPSULE_DATAGRAM_CONTEXT_ID 0x00
+
+typedef enum {
+	UNKNOWN_PROTOCOL = 0,
+	WEBSOCKET,
+	CONNECT_UDP,
+	CONNECT_TCP,
+	CONNECT_IP,
+} ngx_http_tunnel_protocol_t; 			/* For the use of extended connect */
+
+typedef struct {
+	ngx_str_t 							pattern;
+	ngx_regex_t 						*regex;
+	ngx_uint_t 							host_capture;
+	ngx_uint_t 							port_capture;
+} tunnel_extended_connect_regex_t;		/* Regex patterns for matching capsule protocol */
+
+typedef struct {
+	uint64_t 							type;
+	uint64_t 							len;
+	ngx_buf_t 							*payload;
+} tunnel_capsule_t;
+
 typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
@@ -29,6 +53,8 @@ typedef struct {
 	ngx_flag_t 							probe_resistance;
 	ngx_flag_t 							padding;
 	ngx_uint_t 							acl_eval_index;
+	ngx_flag_t 							udp;
+	ngx_http_complex_value_t 			*udp_path;
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
@@ -94,13 +120,32 @@ ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t *r,
 ngx_int_t tunnel_connect_set_target(ngx_http_request_t *r,
 									ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_empty_request(ngx_http_request_t *r);
+ngx_int_t tunnel_extended_connect_branching(ngx_http_request_t *r,
+											ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
 void tunnel_connect_abort_request(ngx_http_request_t *r);
 void tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
 
-ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r);
+ngx_int_t tunnel_udp_is_request(ngx_http_request_t *r);
+ngx_int_t tunnel_udp_set_target(ngx_http_request_t *r,
+								  ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t tunnel_udp_init_upstream(ngx_http_request_t *r,
+								  ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
+ngx_int_t tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx);
 
+ngx_int_t tunnel_capsule_is_header_present(ngx_http_request_t *r);
+size_t tunnel_capsule_varint_size(uint64_t value);
+ngx_int_t tunnel_capsule_decode(ngx_buf_t *src, tunnel_capsule_t *capsule);
+ngx_int_t tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule);
+ngx_int_t tunnel_capsule_decode_datagram(ngx_chain_t **src, ngx_buf_t *dst);
+ngx_int_t tunnel_capsule_encode_datagram(ngx_buf_t *b);
+
+ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r,
+									  ngx_uint_t allow_padding);
+
+/* General helper function checking if request is h2 or h3 */
 static ngx_inline ngx_uint_t
 tunnel_relay_is_stream_downstream(ngx_http_request_t *r)
 {
@@ -150,5 +195,10 @@ void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
 ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
 											 ngx_chain_t **chain, ngx_buf_t *b,
 											 size_t limit);
+ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
+ngx_int_t tunnel_utils_init_extended_connect(ngx_conf_t *cf);
+ngx_int_t
+tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
+								   ngx_http_upstream_resolved_t *resolved);
 
 #endif

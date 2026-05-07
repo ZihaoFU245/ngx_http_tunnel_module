@@ -50,6 +50,67 @@ tunnel_connect_empty_request(ngx_http_request_t *r)
 }
 
 ngx_int_t
+tunnel_extended_connect_branching(ngx_http_request_t *r,
+								  ngx_http_tunnel_ctx_t *ctx)
+{
+	ngx_int_t                    rc;
+	ngx_http_tunnel_protocol_t   proto;
+	ngx_http_tunnel_srv_conf_t  *tscf;
+
+	/*
+	 * TODO: watch nginx core upstream.
+	 * `connect_protocol` is the pseudo header
+	 * for `:protocol`, this requires a patch to
+	 * nginx core.
+	 */
+	if (r->connect_protocol.len == 0) {
+		return NGX_DECLINED;
+	}
+
+	proto = tunnel_utils_match_protocol(r);
+
+	switch (proto) {
+
+	case CONNECT_UDP:
+		tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+
+		if (!tscf->udp) {
+			ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+						  "tunnel UDP is disabled");
+			return NGX_HTTP_NOT_ALLOWED;
+		}
+
+		/* Do not send keepalive header */
+		r->keepalive = 0;
+
+		if (!tunnel_relay_is_stream_downstream(r)) {
+			return NGX_HTTP_BAD_REQUEST;
+		}
+
+		rc = tunnel_capsule_is_header_present(r);
+		if (rc != NGX_OK) {
+			return NGX_HTTP_BAD_REQUEST;
+		}
+
+		ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
+		return tunnel_udp_init_upstream(r, ctx);
+
+	case WEBSOCKET:
+	case CONNECT_IP:
+	case CONNECT_TCP:
+		return NGX_HTTP_NOT_IMPLEMENTED;
+
+	case UNKNOWN_PROTOCOL:
+		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+					  "Unknown method");
+		return NGX_HTTP_BAD_REQUEST;
+
+	default:
+		return NGX_HTTP_INTERNAL_SERVER_ERROR;
+	}
+}
+
+ngx_int_t
 tunnel_connect_process_header(ngx_http_request_t *r)
 {
 	ngx_int_t rc;

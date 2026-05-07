@@ -48,7 +48,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 		return rc;
 	}
 
-	if (tunnel_relay_send_connected(r) != NGX_OK) {
+	if (tunnel_relay_send_connected(r, 1) != NGX_OK) {
 		return NGX_ERROR;
 	}
 
@@ -88,7 +88,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 }
 
 ngx_int_t
-tunnel_relay_send_connected(ngx_http_request_t *r)
+tunnel_relay_send_connected(ngx_http_request_t *r, ngx_uint_t allow_padding)
 {
 	ngx_int_t rc;
 	ngx_http_tunnel_ctx_t *ctx;
@@ -101,7 +101,7 @@ tunnel_relay_send_connected(ngx_http_request_t *r)
 	ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
 	ngx_str_null(&r->headers_out.content_type);
 
-	if (tunnel_padding_add_response_header(r, ctx) != NGX_OK) {
+	if (allow_padding && tunnel_padding_add_response_header(r, ctx) != NGX_OK) {
 		return NGX_ERROR;
 	}
 

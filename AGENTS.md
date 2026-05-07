@@ -25,6 +25,9 @@ module, should be placed in header file.
 
 6. Refactor must not change original logic and data path.
 
+7. Newly added data types, first consider weather it should be added
+in header file, instead scattered everywhere in source file.
+
 # New Feature Guide
 
 1. Must read already written files, must not edit files
@@ -36,6 +39,8 @@ just based on search query results.
 editing.
 
 4. Follow nginx code style, and follow refactor code style.
+
+5. Read Refactor section, keey refactor code style
 
 # New job
 

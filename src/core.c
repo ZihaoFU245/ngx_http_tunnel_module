@@ -61,7 +61,21 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, padding),
      NULL},
 
-    {ngx_string("tunnel_acl_eval_on"),
+    {ngx_string("tunnel_udp"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
+     ngx_conf_set_flag_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, udp),
+     NULL},
+
+    {ngx_string("tunnel_udp_path"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
+     ngx_http_set_complex_value_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, udp_path),
+     NULL},
+
+	{ngx_string("tunnel_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      tunnel_acl_eval_on,
      NGX_HTTP_SRV_CONF_OFFSET,
@@ -184,6 +198,12 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
+	/* Extended connect branching */
+	rc = tunnel_extended_connect_branching(r, ctx);
+	if (rc != NGX_DECLINED) {
+		return rc;
+	}
+
 	if (tunnel_padding_needed(r) == NGX_OK) {
 		ctx->padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
 		if (ctx->padding == NULL) {
@@ -264,7 +284,7 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
 	conf->probe_resistance = NGX_CONF_UNSET;
 	conf->padding = NGX_CONF_UNSET;
 	conf->acl_eval_index = NGX_CONF_UNSET_UINT;
-	
+	conf->udp = NGX_CONF_UNSET;
 	conf->upstream.store = NGX_CONF_UNSET;
 	conf->upstream.store_access = NGX_CONF_UNSET_UINT;
 	conf->upstream.next_upstream_tries = NGX_CONF_UNSET_UINT;
@@ -299,6 +319,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 							 prev->probe_resistance_allow_methods,
 							 "");
 	ngx_conf_merge_value(conf->padding, prev->padding, 0);
+	ngx_conf_merge_value(conf->udp, prev->udp, 0);
 	ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
 	ngx_conf_merge_uint_value(conf->upstream.store_access,
 							  prev->upstream.store_access, 0600);
@@ -342,6 +363,32 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 
 	ngx_conf_merge_uint_value(conf->acl_eval_index, prev->acl_eval_index,
 							  NGX_CONF_UNSET_UINT);
+
+	if (conf->udp_path == NULL) {
+		if (prev->udp_path != NULL) {
+			conf->udp_path = prev->udp_path;
+		} else {
+			ngx_str_t value = ngx_string("$request_uri");
+			ngx_http_compile_complex_value_t ccv;
+
+			conf->udp_path = ngx_palloc(cf->pool,
+										sizeof(ngx_http_complex_value_t));
+			if (conf->udp_path == NULL) {
+				return NGX_CONF_ERROR;
+			}
+
+			ngx_memzero(conf->udp_path, sizeof(ngx_http_complex_value_t));
+			ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+
+			ccv.cf = cf;
+			ccv.value = &value;
+			ccv.complex_value = conf->udp_path;
+
+			if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+				return NGX_CONF_ERROR;
+			}
+		}
+	}
 
 	return NGX_CONF_OK;
 }
@@ -439,6 +486,10 @@ ngx_http_tunnel_init(ngx_conf_t *cf)
 	return NGX_OK;
 
 enabled:
+
+	if (tunnel_utils_init_extended_connect(cf) != NGX_OK) {
+		return NGX_ERROR;
+	}
 
 	h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers);
 	if (h == NULL) {
