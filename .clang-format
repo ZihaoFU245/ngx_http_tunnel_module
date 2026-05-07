@@ -2,57 +2,44 @@
 Language: Cpp
 BasedOnStyle: LLVM
 
-# Indentation & Tab Logic
-UseTab: Always
+# Approximate nginx C style.  This file is intentionally conservative: it
+# avoids include sorting and broad rewrites that create noisy diffs.
+ColumnLimit: 80
+UseTab: Never
 TabWidth: 4
 IndentWidth: 4
 ContinuationIndentWidth: 4
 
-# Layout & Column Limit
-ColumnLimit: 80
-AlwaysBreakAfterReturnType: TopLevelDefinitions
-
-# Braces
+BreakAfterReturnType: TopLevelDefinitions
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterControlStatement: Never
-  AfterFunction: true        # Nginx puts function opening braces on a new line
-  BeforeElse: false          # Nginx puts 'else' on the same line as '}'
+  AfterEnum: false
+  AfterFunction: true
   AfterStruct: false
   AfterUnion: false
-  AfterEnum: false
+  BeforeElse: false
   SplitEmptyFunction: true
 
-# Spacing
+PointerAlignment: Right
 SpaceBeforeParens: ControlStatements
 SpaceAfterCStyleCast: false
-SpacesInParentheses: false
+SpacesInParens: Never
 SpaceBeforeAssignmentOperators: true
 
-# Alignment
-PointerAlignment: Right      # Nginx uses "char *p" style
 AlignAfterOpenBracket: Align
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+  AlignFunctionPointers: true
 AlignTrailingComments: true
 
-# Prohibit "Short" Single-Line Blocks
 AllowShortBlocksOnASingleLine: Never
 AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 
-# Nginx-specific Types (Helps Clang-Format parse pointers correctly)
-Typenames:
-  - ngx_int_t
-  - ngx_uint_t
-  - ngx_str_t
-  - ngx_conf_t
-  - ngx_http_request_t
-  - ngx_msec_t
-  - ngx_buf_t
-  - ngx_chain_t
-  - ngx_peer_connection_t
-  - ngx_flag_t
-
-# Cleanup
-SortIncludes: true
+IncludeBlocks: Preserve
+SortIncludes: false
 ...

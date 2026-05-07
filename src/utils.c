@@ -42,233 +42,233 @@ static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
 ngx_int_t
 tunnel_utils_init_extended_connect(ngx_conf_t *cf)
 {
-	u_char errstr[NGX_MAX_CONF_ERRSTR];
-	ngx_uint_t i;
-	ngx_regex_compile_t rc;
+    u_char              errstr[NGX_MAX_CONF_ERRSTR];
+    ngx_uint_t          i;
+    ngx_regex_compile_t rc;
 
-	for (i = 0; i < sizeof(tunnel_extended_connect_regexes) /
-						sizeof(tunnel_extended_connect_regexes[0]);
-		 i++) {
-		ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
+    for (i = 0; i < sizeof(tunnel_extended_connect_regexes) /
+                        sizeof(tunnel_extended_connect_regexes[0]);
+         i++) {
+        ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
 
-		rc.pattern = tunnel_extended_connect_regexes[i].pattern;
-		rc.pool = cf->pool;
-		rc.err.len = NGX_MAX_CONF_ERRSTR;
-		rc.err.data = errstr;
+        rc.pattern = tunnel_extended_connect_regexes[i].pattern;
+        rc.pool = cf->pool;
+        rc.err.len = NGX_MAX_CONF_ERRSTR;
+        rc.err.data = errstr;
 
-		if (ngx_regex_compile(&rc) != NGX_OK) {
-			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-							   "failed to compile tunnel extended CONNECT "
-							   "regex \"%V\": %V",
-							   &rc.pattern, &rc.err);
-			return NGX_ERROR;
-		}
+        if (ngx_regex_compile(&rc) != NGX_OK) {
+            ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                               "failed to compile tunnel extended CONNECT "
+                               "regex \"%V\": %V",
+                               &rc.pattern, &rc.err);
+            return NGX_ERROR;
+        }
 
-		tunnel_extended_connect_regexes[i].regex = rc.regex;
-	}
+        tunnel_extended_connect_regexes[i].regex = rc.regex;
+    }
 
-	return NGX_OK;
+    return NGX_OK;
 }
 
 ngx_int_t
 tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
-								   ngx_http_upstream_resolved_t *resolved)
+                                   ngx_http_upstream_resolved_t *resolved)
 {
-	int captures[9];
-	ngx_int_t rc, port;
-	ngx_uint_t i;
-	ngx_str_t host;
-	tunnel_extended_connect_regex_t *re;
+    int                              captures[9];
+    ngx_int_t                        rc, port;
+    ngx_uint_t                       i;
+    ngx_str_t                        host;
+    tunnel_extended_connect_regex_t *re;
 
-	if (params == NULL || resolved == NULL) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-					  "invalid extended CONNECT parser argument");
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
-	}
+    if (params == NULL || resolved == NULL) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "invalid extended CONNECT parser argument");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
-	/*
-	 * params is generated from tunnel_udp_path, which defaults to
-	 * $request_uri.  An empty value means the configured complex value did
-	 * not produce a target string, not that the client sent an unparsable
-	 * target.
-	 */
-	if (params->len == 0) {
-		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-					  "tunnel_udp_path evaluated to empty extended CONNECT "
-					  "target");
-		return NGX_HTTP_INTERNAL_SERVER_ERROR;
-	}
+    /*
+     * params is generated from tunnel_udp_path, which defaults to
+     * $request_uri.  An empty value means the configured complex value did
+     * not produce a target string, not that the client sent an unparsable
+     * target.
+     */
+    if (params->len == 0) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "tunnel_udp_path evaluated to empty extended CONNECT "
+                      "target");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
-	for (i = 0; i < sizeof(tunnel_extended_connect_regexes) /
-						sizeof(tunnel_extended_connect_regexes[0]);
-		 i++) {
-		re = &tunnel_extended_connect_regexes[i];
+    for (i = 0; i < sizeof(tunnel_extended_connect_regexes) /
+                        sizeof(tunnel_extended_connect_regexes[0]);
+         i++) {
+        re = &tunnel_extended_connect_regexes[i];
 
-		rc = ngx_regex_exec(re->regex, params, captures, 9);
-		if (rc == NGX_REGEX_NO_MATCHED) {
-			continue;
-		}
+        rc = ngx_regex_exec(re->regex, params, captures, 9);
+        if (rc == NGX_REGEX_NO_MATCHED) {
+            continue;
+        }
 
-		if (rc < 0) {
-			ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-						  ngx_regex_exec_n " failed: %i on \"%V\"", rc, params);
-			return NGX_HTTP_INTERNAL_SERVER_ERROR;
-		}
+        if (rc < 0) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          ngx_regex_exec_n " failed: %i on \"%V\"", rc, params);
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
 
-		host.data = params->data + captures[re->host_capture * 2];
-		host.len =
-			captures[re->host_capture * 2 + 1] - captures[re->host_capture * 2];
+        host.data = params->data + captures[re->host_capture * 2];
+        host.len =
+            captures[re->host_capture * 2 + 1] - captures[re->host_capture * 2];
 
-		if (host.len == 0) {
-			ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-						  "client sent extended CONNECT target without host");
-			return NGX_HTTP_BAD_REQUEST;
-		}
+        if (host.len == 0) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "client sent extended CONNECT target without host");
+            return NGX_HTTP_BAD_REQUEST;
+        }
 
-		port = ngx_atoi(params->data + captures[re->port_capture * 2],
-						captures[re->port_capture * 2 + 1] -
-							captures[re->port_capture * 2]);
+        port = ngx_atoi(params->data + captures[re->port_capture * 2],
+                        captures[re->port_capture * 2 + 1] -
+                            captures[re->port_capture * 2]);
 
-		if (port < 1 || port > 65535) {
-			ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-						  "client sent invalid extended CONNECT target port");
-			return NGX_HTTP_BAD_REQUEST;
-		}
+        if (port < 1 || port > 65535) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "client sent invalid extended CONNECT target port");
+            return NGX_HTTP_BAD_REQUEST;
+        }
 
-		resolved->host = host;
-		resolved->port = (in_port_t)port;
-		resolved->no_port = 0;
+        resolved->host = host;
+        resolved->port = (in_port_t)port;
+        resolved->no_port = 0;
 
-		return NGX_OK;
-	}
+        return NGX_OK;
+    }
 
-	ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-				  "client sent invalid extended CONNECT target \"%V\"", params);
+    ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                  "client sent invalid extended CONNECT target \"%V\"", params);
 
-	return NGX_HTTP_BAD_REQUEST;
+    return NGX_HTTP_BAD_REQUEST;
 }
 
 ngx_http_tunnel_protocol_t
 tunnel_utils_match_protocol(ngx_http_request_t *r)
 {
-	if (tunnel_udp_is_request(r) == NGX_OK) {
-		return CONNECT_UDP;
-	}
+    if (tunnel_udp_is_request(r) == NGX_OK) {
+    	return CONNECT_UDP;
+    }
 
-	/* Other matching will go here */
+    /* Other matching will go here */
 
-	return UNKNOWN_PROTOCOL;
+    return UNKNOWN_PROTOCOL;
 }
 
 void
 tunnel_utils_release_content_ref(ngx_http_tunnel_ctx_t *ctx)
 {
-	ngx_http_request_t *r;
+    ngx_http_request_t *r;
 
-	if (ctx == NULL || !ctx->content_ref_acquired ||
-		ctx->content_ref_released) {
-		return;
-	}
+    if (ctx == NULL || !ctx->content_ref_acquired ||
+        ctx->content_ref_released) {
+        return;
+    }
 
-	r = ctx->request;
-	if (r == NULL) {
-		return;
-	}
+    r = ctx->request;
+    if (r == NULL) {
+        return;
+    }
 
-	ctx->content_ref_released = 1;
+    ctx->content_ref_released = 1;
 
-	if (r->main->count > 1) {
-		r->main->count--;
-	}
+    if (r->main->count > 1) {
+        r->main->count--;
+    }
 }
 
 void
 tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx)
 {
-	ngx_http_request_t *r;
+    ngx_http_request_t *r;
 
-	if (ctx == NULL || !ctx->request_body_ref_acquired ||
-		ctx->request_body_ref_released) {
-		return;
-	}
+    if (ctx == NULL || !ctx->request_body_ref_acquired ||
+        ctx->request_body_ref_released) {
+        return;
+    }
 
-	r = ctx->request;
-	if (r == NULL) {
-		return;
-	}
+    r = ctx->request;
+    if (r == NULL) {
+        return;
+    }
 
-	ctx->request_body_ref_released = 1;
+    ctx->request_body_ref_released = 1;
 
-	if (r->main->count > 1) {
-		r->main->count--;
-	}
+    if (r->main->count > 1) {
+        r->main->count--;
+    }
 }
 
 void
 tunnel_utils_clear_timer(ngx_event_t *ev)
 {
-	if (ev->timer_set) {
-		ngx_del_timer(ev);
-	}
+    if (ev->timer_set) {
+        ngx_del_timer(ev);
+    }
 }
 
 void
 tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout)
 {
-	if (ev->active) {
-		ngx_add_timer(ev, timeout);
-		return;
-	}
+    if (ev->active) {
+        ngx_add_timer(ev, timeout);
+        return;
+    }
 
-	tunnel_utils_clear_timer(ev);
+    tunnel_utils_clear_timer(ev);
 }
 
 void
 tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
-								 ngx_chain_t *limit)
+                                 ngx_chain_t *limit)
 {
-	ngx_chain_t *cl;
+    ngx_chain_t *cl;
 
-	while (*chain != limit && *chain != NULL &&
-		   ngx_buf_size((*chain)->buf) == 0) {
-		cl = *chain;
-		*chain = cl->next;
-		ngx_free_chain(r->pool, cl);
-	}
+    while (*chain != limit && *chain != NULL &&
+           ngx_buf_size((*chain)->buf) == 0) {
+        cl = *chain;
+        *chain = cl->next;
+        ngx_free_chain(r->pool, cl);
+    }
 }
 
 ngx_uint_t
 tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r, ngx_chain_t **chain,
-								  ngx_buf_t *b, size_t limit)
+                                  ngx_buf_t *b, size_t limit)
 {
-	size_t n;
-	size_t size;
-	ngx_uint_t copied;
-	ngx_buf_t *src;
-	ngx_chain_t *cl;
+    size_t       n;
+    size_t       size;
+    ngx_uint_t   copied;
+    ngx_buf_t   *src;
+    ngx_chain_t *cl;
 
-	copied = 0;
+    copied = 0;
 
-	for (;;) {
-		tunnel_utils_free_consumed_chain(r, chain, NULL);
+    for (;;) {
+        tunnel_utils_free_consumed_chain(r, chain, NULL);
 
-		cl = *chain;
-		if (cl == NULL || b->last == b->end || limit == 0) {
-			return copied;
-		}
+        cl = *chain;
+        if (cl == NULL || b->last == b->end || limit == 0) {
+            return copied;
+        }
 
-		src = cl->buf;
-		size = b->end - b->last;
-		n = ngx_min((size_t)ngx_buf_size(src), size);
-		n = ngx_min(n, limit);
+        src = cl->buf;
+        size = b->end - b->last;
+        n = ngx_min((size_t)ngx_buf_size(src), size);
+        n = ngx_min(n, limit);
 
-		if (n == 0) {
-			return copied;
-		}
+        if (n == 0) {
+            return copied;
+        }
 
-		b->last = ngx_cpymem(b->last, src->pos, n);
-		src->pos += n;
-		limit -= n;
-		copied = 1;
-	}
+        b->last = ngx_cpymem(b->last, src->pos, n);
+        src->pos += n;
+        limit -= n;
+        copied = 1;
+    }
 }
