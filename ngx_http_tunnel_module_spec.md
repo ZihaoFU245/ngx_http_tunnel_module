@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-`ngx_http_tunnel_module` implements **classic HTTP CONNECT tunneling** for nginx in the HTTP subsystem.
+`ngx_http_tunnel_module` implements HTTP tunneling for nginx in the HTTP subsystem.
 
-This module acts as a **forward proxy for CONNECT requests**. When enabled, nginx accepts a client CONNECT request, establishes an outbound TCP connection to the requested authority, returns a successful CONNECT response, and then relays raw bytes between client and upstream until either side closes or a timeout occurs.
+This module acts as a **forward proxy for CONNECT requests**. When enabled, nginx accepts a client CONNECT request, establishes an outbound connection to the requested target, returns a successful CONNECT response, and then relays traffic between client and upstream until either side closes or a timeout occurs.
 
 This module is intended as an open-source alternative to the nginx Plus tunnel feature set, but this implementation only targets a narrow, well-defined subset.
 
@@ -16,11 +16,14 @@ This module is intended as an open-source alternative to the nginx Plus tunnel f
 
 This implementation supports:
 
-- classic HTTP CONNECT only
+- classic HTTP CONNECT
 - HTTP/1.1 CONNECT
 - HTTP/2 CONNECT
 - HTTP/3 CONNECT
 - direct connection to the authority requested by the client
+- extended CONNECT with `:protocol = connect-udp`
+- MASQUE CONNECT-UDP over HTTP/2 or HTTP/3 stream DATA
+- HTTP Capsule Protocol DATAGRAM capsules with `Context ID = 0`
 - optional Basic proxy authentication using `Proxy-Authorization`
 - configurable connect timeout
 - configurable idle timeout
@@ -31,21 +34,21 @@ This implementation supports:
 
 This implementation does **not** support:
 
-- extended CONNECT
 - path-based CONNECT routing
 - WebSocket-over-CONNECT extensions
-- MASQUE
+- extended CONNECT protocols other than CONNECT-UDP
+- QUIC DATAGRAM transport for CONNECT-UDP
+- CONNECT-UDP over HTTP/1.1
 - relaying CONNECT to another upstream proxy using `tunnel_pass <address>`
 - adding `Via`, `X-Forwarded-For`, or similar forwarding headers
 - ACL features such as CIDR allow/deny lists
-- UDP tunneling
 - request body handling for non-CONNECT methods
 - transparent proxying
 - MITM TLS interception
 - socket keepalive tuning
 - timing obfuscation or traffic shaping beyond payload length padding
 
-If future support for extended CONNECT is added, it must be treated as a separate feature set and not mixed into this implementation.
+Extended CONNECT support is limited to the CONNECT-UDP path documented below.
 
 ---
 
@@ -64,7 +67,7 @@ They are **not** valid in:
 
 ### 3.2 Rationale
 
-Classic CONNECT is authority-form tunneling and is treated as **server-level proxy behavior**, not location-based content routing. Restricting configuration to `server {}` keeps the implementation simple and avoids ambiguity with extended CONNECT semantics.
+CONNECT tunneling is treated as **server-level proxy behavior**, not location-based content routing. Restricting configuration to `server {}` keeps the implementation simple and avoids ambiguity with extended CONNECT semantics.
 
 The padding protocol operates at tunnel-session scope, which is also a server-level concept. Padding directives follow the same restriction.
 
@@ -105,7 +108,7 @@ server {
 	tunnel_pass;
 	tunnel_proxy_auth_user_file htpasswd;
 
-	tunnel_buffer_size 16k;
+	tunnel_buffer_size 128k;
 	tunnel_connect_timeout 60s;
 	tunnel_idle_timeout 30s;
 	tunnel_probe_resistance off;
@@ -131,7 +134,7 @@ server {
 	tunnel_proxy_auth_user_file htpasswd;
 	tunnel_padding on;
 
-	tunnel_buffer_size 16k;
+	tunnel_buffer_size 128k;
 	tunnel_connect_timeout 60s;
 	tunnel_idle_timeout 30s;
 	tunnel_probe_resistance off;
@@ -158,6 +161,22 @@ server {
 }
 ```
 
+### 4.5 Configuration with CONNECT-UDP
+
+```nginx
+server {
+	listen 0.0.0.0:3128 http2;
+
+	resolver 1.1.1.1 8.8.8.8;
+
+	tunnel_pass;
+	tunnel_udp on;
+
+	# Optional. Defaults to $request_uri.
+	tunnel_udp_path $request_uri;
+}
+```
+
 ---
 
 ## 5. Request model
@@ -180,6 +199,20 @@ Proxy-Authorization: Basic dXNlcjpwYXNz
 :method = CONNECT
 :authority = example.com:443
 ```
+
+#### HTTP/2 and HTTP/3 CONNECT-UDP conceptual form
+
+```text
+:method = CONNECT
+:scheme = https
+:authority = proxy.example
+:path = /.well-known/masque/udp/example.com/443/
+:protocol = connect-udp
+capsule-protocol = ?1
+```
+
+For CONNECT-UDP, `:authority` names the proxy and the UDP target is parsed from
+the configured `tunnel_udp_path` value. By default this value is `$request_uri`.
 
 #### HTTP/2 CONNECT with padding negotiation
 
@@ -211,15 +244,16 @@ tunnel_pass;
 
 #### Meaning
 
-Enables classic CONNECT tunneling for the enclosing server block.
+Enables tunnel handling for the enclosing server block.
 
 When a valid CONNECT request is received, nginx:
 
-1. extracts the requested authority from the request
-2. resolves the hostname if required
-3. opens an outbound TCP connection to the requested target
-4. returns a successful CONNECT response to the client
-5. switches into bidirectional byte relay mode
+1. classifies the request as classic CONNECT or an enabled extended CONNECT protocol
+2. extracts the requested target from the authority or configured extended CONNECT target source
+3. resolves the hostname if required
+4. opens an outbound connection to the requested target
+5. returns a successful CONNECT response to the client
+6. switches into bidirectional relay mode
 
 #### Notes
 
@@ -272,14 +306,14 @@ Size of relay buffer used for copying bytes between client and upstream.
 #### Default
 
 ```nginx
-tunnel_buffer_size 16k;
+tunnel_buffer_size 128k;
 ```
 
 #### Notes
 
 - This is an nginx size value such as `4k`, `16k`, `64k`, `1m`.
-- `16k` means 16 KiB, not 16 MB.
-- The implementation may reject values below a minimum threshold if needed.
+- `128k` means 128 KiB, not 128 MB.
+- Values below `64k` are rejected during configuration merge.
 - When padding is active, the `original_data_size` field in `PaddedData` is two bytes, limiting a single padded message to 65535 bytes. If the relay buffer exceeds this, the implementation must split the payload across multiple `PaddedData` frames before writing.
 
 ---
@@ -457,6 +491,69 @@ tunnel_padding off;
 
 ---
 
+### 6.11 `tunnel_udp`
+
+#### Syntax
+
+```nginx
+tunnel_udp on | off;
+```
+
+#### Context
+
+- `server`
+
+#### Meaning
+
+Enables MASQUE CONNECT-UDP handling for this server block. `tunnel_pass;` must
+also be enabled because the module still only participates in CONNECT requests
+for tunnel-enabled servers.
+
+When `off`, a request with `:protocol = connect-udp` is rejected.
+
+#### Default
+
+```nginx
+tunnel_udp off;
+```
+
+---
+
+### 6.12 `tunnel_udp_path`
+
+#### Syntax
+
+```nginx
+tunnel_udp_path <complex-value>;
+```
+
+#### Context
+
+- `server`
+
+#### Meaning
+
+Selects the string used to parse the CONNECT-UDP target host and port. The value
+is compiled as an nginx complex value, so variables are allowed.
+
+#### Default
+
+```nginx
+tunnel_udp_path $request_uri;
+```
+
+#### Accepted target forms
+
+The parser accepts:
+
+- a path ending in `<host>/<port>/`, such as `/.well-known/masque/udp/example.com/443/`
+- query parameters `h=<host>&p=<port>` or `p=<port>&h=<host>`
+- query parameters `target_host=<host>&target_port=<port>` or `target_port=<port>&target_host=<host>`
+
+The host must be non-empty and the port must be numeric in the range `1..65535`.
+
+---
+
 ## 7. nginx phase integration
 
 The module participates in:
@@ -494,12 +591,14 @@ The content-phase handler must:
 
 1. verify method is CONNECT
 2. verify `tunnel_pass` is enabled
-3. extract and validate target authority
-4. resolve hostname if needed
-5. initiate outbound TCP connection
-6. upon success, send successful CONNECT response, including the `padding` response header if padding was negotiated
-7. install event handlers for bidirectional relay; if padding was negotiated, install the `PaddedData` framing layer on the relay handlers
-8. manage idle timeout and final cleanup
+3. branch extended CONNECT requests by `:protocol`
+4. for classic CONNECT, extract and validate target authority
+5. for CONNECT-UDP, validate `Capsule-Protocol: ?1`, parse `tunnel_udp_path`, and require HTTP/2 or HTTP/3 stream DATA
+6. resolve hostname if needed
+7. initiate an outbound TCP connection for classic CONNECT or UDP upstream socket for CONNECT-UDP
+8. upon success, send successful CONNECT response, including the `padding` response header if padding was negotiated for classic CONNECT or `Capsule-Protocol: ?1` for CONNECT-UDP
+9. install event handlers for bidirectional relay; if padding was negotiated, install the `PaddedData` framing layer on the classic CONNECT relay handlers
+10. manage idle timeout and final cleanup
 
 For non-CONNECT requests, the content handler must return `NGX_DECLINED`.
 
@@ -524,6 +623,17 @@ The module must validate:
 If target validation fails, the request must be rejected before outbound connection is attempted.
 
 The module must not attempt location-based URI routing for CONNECT.
+
+### 8.1 CONNECT-UDP target parsing
+
+CONNECT-UDP does not use classic CONNECT authority-form target parsing. It uses
+the evaluated `tunnel_udp_path` string and `tunnel_util_parse_extended_connect`
+to fill the upstream resolved host and port.
+
+Malformed or unparseable CONNECT-UDP targets must be rejected with
+`400 Bad Request`. If `tunnel_udp_path` evaluates to an empty string, this is a
+configuration/runtime evaluation error and must be treated as an internal
+server error.
 
 ---
 
@@ -578,6 +688,17 @@ Once a CONNECT request is accepted:
 
 No forwarding headers are added, because after CONNECT succeeds the module is relaying raw bytes, not generating a forwarded HTTP request.
 
+For CONNECT-UDP:
+
+1. determine the target host and port from `tunnel_udp_path`
+2. resolve host using nginx resolver if DNS resolution is needed
+3. create the upstream through nginx HTTP upstream infrastructure
+4. set the upstream peer type to `SOCK_DGRAM`
+5. send a successful CONNECT response with `Capsule-Protocol: ?1`
+6. relay HTTP DATA capsule bytes to and from UDP datagrams
+
+The UDP path uses one connected UDP upstream socket per CONNECT-UDP request.
+
 ---
 
 ## 11. Successful CONNECT response
@@ -599,6 +720,14 @@ padding: <random non-Huffman-coded bytes, length in [30, 62]>
 The padding header value must use bytes that are not efficiently Huffman-coded and must not be HPACK-indexable. This ensures the padding survives HTTP/2 header compression and lands on the wire at the intended length. See section 12.4 for construction requirements.
 
 After success is acknowledged, the request transitions from HTTP request handling into stream-like tunnel relay.
+
+For CONNECT-UDP, the successful response also includes:
+
+```text
+Capsule-Protocol: ?1
+```
+
+The request/response body then carries HTTP Capsule Protocol bytes.
 
 ---
 
@@ -734,6 +863,21 @@ After successful outbound connection:
 
 When padding is active, the `PaddedData` framing layer is applied on each relay write for the first `kFirstPaddings` exchanges per direction, and the corresponding decoder is applied on each relay read. After the counter for a direction reaches `kFirstPaddings`, that direction switches to raw relay mode. The two directions switch independently.
 
+### 13.1 CONNECT-UDP capsule relay
+
+CONNECT-UDP relay uses unbuffered HTTP request-body reading for downstream DATA
+and nginx output filtering for upstream-to-downstream DATA.
+
+Downstream DATA is decoded as HTTP Capsule Protocol frames. The implementation
+accepts only DATAGRAM capsules with `Context ID = 0`; each accepted DATAGRAM
+capsule becomes one UDP send to the connected upstream socket. Unsupported
+capsule types, non-zero context IDs, incomplete final capsules, and datagrams
+larger than the relay buffer are rejected as malformed requests.
+
+Each UDP datagram received from upstream is encoded as one DATAGRAM capsule with
+`Context ID = 0` and written downstream as HTTP DATA. The relay reserves capsule
+header headroom in the downstream buffer before receiving from the UDP socket.
+
 ---
 
 ## 14. Timeout behavior
@@ -763,6 +907,7 @@ The implementation must use consistent response mapping.
 Recommended mapping:
 
 - malformed CONNECT request or malformed authority: `400 Bad Request`
+- malformed CONNECT-UDP capsule, target, or required header: `400 Bad Request`
 - malformed `PaddedData` frame received during padded relay: `400 Bad Request`
 - authentication required or invalid auth: `407 Proxy Authentication Required`
 - authentication failure with probe resistance enabled:
@@ -836,6 +981,12 @@ A reasonable structure is:
 - timeout handlers
 - cleanup helpers
 
+The current UDP implementation is split across:
+
+- `src/udp.c`: CONNECT-UDP classification, setup, target parsing, UDP upstream handoff
+- `src/udp_relay.c`: unbuffered request-body handling, capsule-to-UDP and UDP-to-capsule relay
+- `src/capsule.c`: QUIC varint helpers and generic capsule DATAGRAM encode/decode helpers
+
 ### 18.3 Important constraint
 
 Do not build this as a normal HTTP upstream request proxy. After successful CONNECT, this becomes a tunnel relay problem, not a regular upstream response-body flow problem. The `PaddedData` layer sits inside the relay, not inside the nginx upstream machinery.
@@ -848,9 +999,9 @@ The following must not be partially implemented:
 
 - `tunnel_pass <address>`
 - location-level CONNECT routing
-- extended CONNECT support
+- extended CONNECT protocols other than CONNECT-UDP
 - upstream proxy chaining
-- protocol tunneling beyond raw TCP relay
+- protocol tunneling beyond raw TCP relay and CONNECT-UDP
 - adaptive or configurable padding beyond the fixed `kFirstPaddings` / `kMaxPaddingSize` scheme
 - timing obfuscation or traffic shaping
 
@@ -902,13 +1053,13 @@ Either implement them properly in a later version, or leave them fully absent fr
 
 ## 21. Final summary
 
-This module is a **server-level classic CONNECT forward proxy** for nginx.
+This module is a **server-level CONNECT forward proxy** for nginx.
 
 The implementation must:
 
 - only handle CONNECT
 - only operate when enabled by `tunnel_pass;`
-- directly connect to the client-requested authority
+- directly connect to the client-requested classic CONNECT authority or CONNECT-UDP target
 - optionally require Basic proxy authentication
 - return correct proxy error codes
 - switch into nonblocking bidirectional relay mode after success
@@ -916,3 +1067,4 @@ The implementation must:
 - when `tunnel_padding on`: negotiate padding capability via the `padding` header in the CONNECT exchange
 - when padding is negotiated: apply `PaddedData` framing to the first `kFirstPaddings` relay exchanges per direction, then relay raw bytes for the remainder of the session
 - never activate padding for clients that do not signal capability, preserving full interoperability with unaware clients
+- when `tunnel_udp on`: support CONNECT-UDP over HTTP/2 or HTTP/3 DATA streams using DATAGRAM capsules with `Context ID = 0`

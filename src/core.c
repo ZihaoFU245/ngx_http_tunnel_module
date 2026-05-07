@@ -310,7 +310,14 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_value(conf->enable, prev->enable, 0);
 	ngx_conf_merge_ptr_value(conf->proxy_auth_user_file,
 							 prev->proxy_auth_user_file, NULL);
-	ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size, 16 * 1024);
+	ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size,
+							  128 * 1024);
+
+	if (conf->buffer_size < 64 * 1024) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+						   "\"tunnel_buffer_size\" must be at least 64k");
+		return NGX_CONF_ERROR;
+	}
 	ngx_conf_merge_msec_value(conf->connect_timeout, prev->connect_timeout,
 							  60000);
 	ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
