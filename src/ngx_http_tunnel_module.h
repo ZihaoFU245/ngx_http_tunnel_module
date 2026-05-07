@@ -139,7 +139,8 @@ size_t tunnel_capsule_varint_size(uint64_t value);
 ngx_int_t tunnel_capsule_decode(ngx_buf_t *src, tunnel_capsule_t *capsule);
 ngx_int_t tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule);
 ngx_int_t tunnel_capsule_decode_datagram(ngx_chain_t **src, ngx_buf_t *dst);
-ngx_int_t tunnel_capsule_encode_datagram(ngx_buf_t *b);
+ngx_int_t tunnel_capsule_encode_datagram(tunnel_capsule_t *capsule,
+										 ngx_buf_t *dst);
 
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r,

@@ -441,8 +441,10 @@ udp_recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 	ssize_t              n;
 	size_t               size;
 	ngx_buf_t           *b;
+	ngx_buf_t            payload;
 	ngx_connection_t    *pc;
 	ngx_http_request_t  *r;
+	tunnel_capsule_t     capsule;
 
 	r = ctx->request;
 	pc = r->upstream->peer.connection;
@@ -460,9 +462,9 @@ udp_recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
-	b->pos = b->start + UDP_CAPSULE_HEADER_RESERVE;
+	b->pos = b->start;
 	b->last = b->pos;
-	size = b->end - b->last;
+	size = b->end - b->last - UDP_CAPSULE_HEADER_RESERVE;
 
 	n = pc->recv(pc, b->last, size);
 	if (n == NGX_AGAIN) {
@@ -484,7 +486,19 @@ udp_recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
 	b->last += n;
 
-	if (tunnel_capsule_encode_datagram(b) != NGX_OK) {
+	ngx_memzero(&payload, sizeof(ngx_buf_t));
+	payload.pos = b->pos;
+	payload.last = b->last;
+	payload.start = b->pos;
+	payload.end = b->last;
+	payload.memory = 1;
+
+	capsule.type = CAPSULE_DATAGRAM;
+	capsule.len = tunnel_capsule_varint_size(CAPSULE_DATAGRAM_CONTEXT_ID) +
+				  (size_t)n;
+	capsule.payload = &payload;
+
+	if (tunnel_capsule_encode_datagram(&capsule, b) != NGX_OK) {
 		return NGX_HTTP_INTERNAL_SERVER_ERROR;
 	}
 
