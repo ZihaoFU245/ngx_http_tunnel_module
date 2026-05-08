@@ -3,7 +3,6 @@
  * Copyright(c) 2026 ZihaoFU245
  */
 
-
 #include "ngx_http_tunnel_module.h"
 
 static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
@@ -152,56 +151,12 @@ ngx_http_tunnel_protocol_t
 tunnel_utils_match_protocol(ngx_http_request_t *r)
 {
     if (tunnel_udp_is_request(r) == NGX_OK) {
-    	return CONNECT_UDP;
+        return CONNECT_UDP;
     }
 
     /* Other matching will go here */
 
     return UNKNOWN_PROTOCOL;
-}
-
-void
-tunnel_utils_release_content_ref(ngx_http_tunnel_ctx_t *ctx)
-{
-    ngx_http_request_t *r;
-
-    if (ctx == NULL || !ctx->content_ref_acquired ||
-        ctx->content_ref_released) {
-        return;
-    }
-
-    r = ctx->request;
-    if (r == NULL) {
-        return;
-    }
-
-    ctx->content_ref_released = 1;
-
-    if (r->main->count > 1) {
-        r->main->count--;
-    }
-}
-
-void
-tunnel_utils_release_request_body_ref(ngx_http_tunnel_ctx_t *ctx)
-{
-    ngx_http_request_t *r;
-
-    if (ctx == NULL || !ctx->request_body_ref_acquired ||
-        ctx->request_body_ref_released) {
-        return;
-    }
-
-    r = ctx->request;
-    if (r == NULL) {
-        return;
-    }
-
-    ctx->request_body_ref_released = 1;
-
-    if (r->main->count > 1) {
-        r->main->count--;
-    }
 }
 
 void

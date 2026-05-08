@@ -66,7 +66,7 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     u->finalize_request = tunnel_connect_finalize_request;
 
     r->main->count++;
-    ctx->content_ref_acquired = 1;
+    ctx->content_handler_ref = 1;
 
     ngx_http_upstream_init(r);
 

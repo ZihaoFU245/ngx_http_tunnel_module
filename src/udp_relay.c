@@ -59,7 +59,7 @@ tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx)
     r->keepalive = 0;
     c->log->action = "tunneling UDP capsules";
 
-    rc = tunnel_relay_v2_init_request_body(ctx);
+    rc = tunnel_relay_init_request_body(ctx);
     if (rc != NGX_OK) {
         return rc;
     }
@@ -109,7 +109,6 @@ udp_downstream_read_handler(ngx_http_request_t *r)
         return;
     }
 
-    ctx->downstream_read_posted = 0;
     udp_relay_process(ctx);
 }
 
@@ -267,15 +266,14 @@ udp_relay_process(ngx_http_tunnel_ctx_t *ctx)
         tunnel_utils_update_idle_timer(pc->read, idle_timeout);
         tunnel_utils_update_idle_timer(c->write, idle_timeout);
         tunnel_utils_update_idle_timer(c->read, idle_timeout);
-        ctx->stall_wakeup_posted = 0;
+        ctx->read_again_event_posted = 0;
     }
 
-    if (!ctx->stall_wakeup_posted &&
+    if (!ctx->read_again_event_posted &&
         ctx->client_buffer->pos == ctx->client_buffer->last &&
         ctx->upstream_buffer->pos == ctx->upstream_buffer->last &&
         r->reading_body && !ctx->downstream_eof && !pc->read->eof) {
         tunnel_relay_post_downstream_read(ctx);
-        ctx->stall_wakeup_posted = 1;
     }
 
     return;
@@ -313,19 +311,17 @@ udp_recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
 
-    if (ctx->downstream_eof) {
+    if (ctx->downstream_chain != NULL || ctx->downstream_eof) {
         return NGX_OK;
     }
 
-    if (!ctx->request_body_started || !r->reading_body) {
+    if (!r->reading_body) {
         if (r->request_body != NULL && r->request_body->bufs != NULL) {
             udp_append_downstream_chain(ctx, r->request_body->bufs);
             r->request_body->bufs = NULL;
             *activity = 1;
-            ctx->stall_wakeup_posted = 0;
-        } else if (ctx->request_body_started) {
+        } else {
             ctx->downstream_eof = 1;
-            tunnel_utils_release_request_body_ref(ctx);
         }
 
         return NGX_OK;
@@ -340,10 +336,8 @@ udp_recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         udp_append_downstream_chain(ctx, r->request_body->bufs);
         r->request_body->bufs = NULL;
         *activity = 1;
-        ctx->stall_wakeup_posted = 0;
     } else if (rc == NGX_OK && !r->reading_body) {
         ctx->downstream_eof = 1;
-        tunnel_utils_release_request_body_ref(ctx);
     }
 
     return NGX_OK;

@@ -86,31 +86,31 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
 };
 
 static ngx_http_module_t ngx_http_tunnel_module_ctx = {
-	ngx_http_tunnel_add_variables,
-	ngx_http_tunnel_init,
+    ngx_http_tunnel_add_variables,
+    ngx_http_tunnel_init,
 
-	NULL,
-	NULL,
+    NULL,
+    NULL,
 
-	ngx_http_tunnel_create_srv_conf,
-	ngx_http_tunnel_merge_srv_conf,
+    ngx_http_tunnel_create_srv_conf,
+    ngx_http_tunnel_merge_srv_conf,
 
-	NULL,
+    NULL,
 	NULL
 };
 
 ngx_module_t ngx_http_tunnel_module = {
     NGX_MODULE_V1,
-	&ngx_http_tunnel_module_ctx,
-	ngx_http_tunnel_commands,
-	NGX_HTTP_MODULE,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
-	NULL,
+    &ngx_http_tunnel_module_ctx,
+    ngx_http_tunnel_commands,
+    NGX_HTTP_MODULE,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
 	NGX_MODULE_V1_PADDING
 };
 
@@ -158,6 +158,8 @@ ngx_int_t
 ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 {
     ngx_int_t                   rc;
+    ngx_int_t                   padding_needed;
+    size_t                      client_buffer_size;
     ngx_http_tunnel_ctx_t      *ctx;
     ngx_http_tunnel_srv_conf_t *tscf;
     ngx_http_upstream_t        *u;
@@ -188,7 +190,13 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 
     ctx->request = r;
 
-    ctx->client_buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
+    padding_needed = (r->connect_protocol.len == 0) ? tunnel_padding_needed(r)
+                                                    : NGX_DECLINED;
+    client_buffer_size = (padding_needed == NGX_OK)
+                             ? tunnel_padding_buffer_size(r)
+                             : tscf->buffer_size;
+
+    ctx->client_buffer = ngx_create_temp_buf(r->pool, client_buffer_size);
     if (ctx->client_buffer == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
@@ -204,19 +212,13 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return rc;
     }
 
-    if (tunnel_padding_needed(r) == NGX_OK) {
+    if (padding_needed == NGX_OK) {
         ctx->padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
         if (ctx->padding == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        ctx->padding->buffer =
-            ngx_create_temp_buf(r->pool, tunnel_padding_buffer_size(r));
-        if (ctx->padding->buffer == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-
-        if (tunnel_padding_negotiate(r, ctx) != NGX_OK) {
+        if (tunnel_padding_negotiate(r, ctx->padding) != NGX_OK) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
     }
@@ -241,7 +243,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     u->finalize_request = tunnel_connect_finalize_request;
 
     r->main->count++;
-    ctx->content_ref_acquired = 1;
+    ctx->content_handler_ref = 1;
 
     ngx_http_upstream_init(r);
 
@@ -324,7 +326,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
                              prev->probe_resistance_allow_methods, "");
     ngx_conf_merge_value(conf->padding, prev->padding, 0);
-    ngx_conf_merge_value(conf->udp, prev->udp, 0);
+    ngx_conf_merge_value(conf->udp, prev->udp, 1);
     ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
     ngx_conf_merge_uint_value(conf->upstream.store_access,
                               prev->upstream.store_access, 0600);

@@ -143,7 +143,7 @@ tunnel_connect_process_header(ngx_http_request_t *r)
         /*
          * Route every relay_start failure through tunnel_relay_finalize so
          * the request-body ref acquired inside
-         * tunnel_relay_v2_init_request_body is released; otherwise
+         * tunnel_relay_init_request_body is released; otherwise
          * ngx_http_finalize_request alone cannot bring r->main->count to zero
          * and the request pool leaks.
          */
@@ -186,7 +186,10 @@ tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
-    if (!ctx->finalized) {
-        tunnel_utils_release_content_ref(ctx);
+    if (!ctx->finalized && ctx->content_handler_ref) {
+        ctx->content_handler_ref = 0;
+        if (r->main->count > 1) {
+            r->main->count--;
+        }
     }
 }

@@ -1,14 +1,32 @@
-
 /*
  * Copyright(c) 2026 ZihaoFU245
+ *
+ * Bidirectional byte relay for client and upstream.
  */
 
 #include "ngx_http_tunnel_module.h"
 
-static void tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx);
-static void tunnel_relay_finalize_on_error(ngx_http_request_t    *r,
-                                           ngx_http_tunnel_ctx_t *ctx,
-                                           ngx_int_t              rc);
+#define NGX_HTTP_RELAY_MAX_ITERATIONS 64
+#define RELAY_CHECK_PERIOD 8
+
+static void                  request_body_post_handler(ngx_http_request_t *r);
+static ngx_int_t             recv_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                             ngx_uint_t            *activity);
+static ngx_int_t             send_upstream(ngx_http_tunnel_ctx_t *ctx,
+                                           ngx_uint_t            *activity);
+static ngx_int_t             recv_upstream(ngx_http_tunnel_ctx_t *ctx,
+                                           ngx_uint_t            *activity);
+static ngx_int_t             send_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                             ngx_uint_t            *activity);
+static ngx_int_t             close_upstream_write(ngx_http_tunnel_ctx_t *ctx,
+                                                  ngx_uint_t             upload_drained);
+static ngx_inline ngx_uint_t downstream_output_idle(ngx_http_request_t *r,
+                                                    ngx_connection_t   *c);
+static ngx_inline ngx_uint_t is_relay_finished(ngx_http_tunnel_ctx_t *ctx,
+                                               ngx_http_request_t    *r,
+                                               ngx_connection_t      *c,
+                                               ngx_connection_t      *pc,
+                                               ngx_uint_t *upload_drained);
 
 ngx_int_t
 tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
@@ -27,6 +45,10 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     c = r->connection;
     pc = u->peer.connection;
 
+    if (pc == NULL) {
+        return NGX_ERROR;
+    }
+
     tunnel_utils_clear_timer(pc->read);
     tunnel_utils_clear_timer(pc->write);
 
@@ -42,7 +64,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
         }
     }
 
-    rc = tunnel_relay_v2_init_request_body(ctx);
+    rc = tunnel_relay_init_request_body(ctx);
     if (rc != NGX_OK) {
         return rc;
     }
@@ -77,11 +99,9 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 
     if (pc->read->ready) {
         tunnel_relay_post_downstream_read(ctx);
-        tunnel_relay_process(ctx, 1, 1);
-        return NGX_OK;
     }
 
-    tunnel_relay_process(ctx, 0, 1);
+    tunnel_relay_process(ctx);
 
     return NGX_OK;
 }
@@ -100,7 +120,8 @@ tunnel_relay_send_connected(ngx_http_request_t *r, ngx_uint_t allow_padding)
     ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
     ngx_str_null(&r->headers_out.content_type);
 
-    if (allow_padding && tunnel_padding_add_response_header(r, ctx) != NGX_OK) {
+    if (allow_padding &&
+        tunnel_padding_add_response_header(r, ctx->padding) != NGX_OK) {
         return NGX_ERROR;
     }
 
@@ -113,14 +134,32 @@ tunnel_relay_send_connected(ngx_http_request_t *r, ngx_uint_t allow_padding)
         return NGX_ERROR;
     }
 
-    /*
-     * CONNECT sends only headers plus an initial flush before switching to raw
-     * tunnel relay, so nginx's normal last-buffer path never marks the response
-     * as sent. HTTP/3 cleanup treats that as an aborted stream and resets it.
-     */
     r->response_sent = 1;
 
     return NGX_OK;
+}
+
+ngx_int_t
+tunnel_relay_init_request_body(ngx_http_tunnel_ctx_t *ctx)
+{
+    ngx_int_t           rc;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
+
+    if (!tunnel_relay_is_stream_downstream(r)) {
+        return NGX_OK;
+    }
+
+    if (r->stream && r->stream->in_closed) {
+        ctx->downstream_eof = 1;
+        return NGX_OK;
+    }
+
+    r->request_body_no_buffering = 1;
+
+    rc = ngx_http_read_client_request_body(r, request_body_post_handler);
+    return (rc >= NGX_HTTP_SPECIAL_RESPONSE) ? rc : NGX_OK;
 }
 
 void
@@ -130,12 +169,11 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
     if (ctx == NULL) {
-        tunnel_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
 
-    ctx->downstream_read_posted = 0;
-    tunnel_relay_process(ctx, 0, 0);
+    tunnel_relay_process(ctx);
 }
 
 void
@@ -145,11 +183,11 @@ tunnel_relay_downstream_write_handler(ngx_http_request_t *r)
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
     if (ctx == NULL) {
-        tunnel_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
+        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
 
-    tunnel_relay_process(ctx, 1, 1);
+    tunnel_relay_process(ctx);
 }
 
 void
@@ -161,7 +199,7 @@ tunnel_relay_upstream_read_handler(ngx_event_t *ev)
     c = ev->data;
     ctx = c->data;
 
-    tunnel_relay_process(ctx, 1, 0);
+    tunnel_relay_process(ctx);
 }
 
 void
@@ -173,33 +211,142 @@ tunnel_relay_upstream_write_handler(ngx_event_t *ev)
     c = ev->data;
     ctx = c->data;
 
-    tunnel_relay_process(ctx, 0, 1);
+    tunnel_relay_process(ctx);
 }
 
 void
-tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t from_upstream,
-                     ngx_uint_t do_write)
+tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
 {
-    ngx_int_t rc;
+    ngx_int_t                   rc;
+    ngx_uint_t                  i, flags, activity, loop_activity;
+    ngx_uint_t                  upload_drained;
+    ngx_msec_t                  idle_timeout;
+    ngx_connection_t           *c, *pc;
+    ngx_http_core_loc_conf_t   *clcf;
+    ngx_http_request_t         *r;
+    ngx_http_tunnel_srv_conf_t *tscf;
 
-    (void)from_upstream;
-    (void)do_write;
+    if (ctx == NULL || ctx->finalized) {
+        return;
+    }
 
-    /*
-     * HTTP/3 uses the same stream-body abstraction as HTTP/2 here:
-     * request-body chains for upload and the HTTP output filter for
-     * download. Protocol-specific differences stay below nginx core.
-     */
-    rc = tunnel_relay_v2_process(ctx);
+    r = ctx->request;
+    c = r->connection;
+    pc = r->upstream->peer.connection;
 
-    if (rc == NGX_DONE) {
+    if (pc == NULL) {
         tunnel_relay_finalize(ctx, NGX_OK);
         return;
     }
 
-    if (rc != NGX_OK) {
-        tunnel_relay_finalize(ctx, rc);
+    if (c->read->timedout || c->write->timedout || pc->read->timedout ||
+        pc->write->timedout) {
+        ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
+                      "tunnel idle timeout");
+        tunnel_relay_finalize(ctx, NGX_OK);
+        return;
     }
+
+    activity = 0;
+
+    for (i = 0; i < NGX_HTTP_RELAY_MAX_ITERATIONS; i++) {
+        loop_activity = 0;
+
+        if ((i % RELAY_CHECK_PERIOD) == 0 &&
+            (ngx_terminate || ngx_quit || ngx_exiting)) {
+            tunnel_relay_finalize(ctx, NGX_OK);
+            return;
+        }
+
+        rc = recv_downstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        rc = send_upstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        rc = recv_upstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        rc = send_downstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        if (loop_activity) {
+            activity = 1;
+        }
+
+        if (is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+            tunnel_relay_finalize(ctx, NGX_OK);
+            return;
+        }
+
+        rc = close_upstream_write(ctx, upload_drained);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        if (!loop_activity) {
+            break;
+        }
+    }
+
+    if (is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+        tunnel_relay_finalize(ctx, NGX_OK);
+        return;
+    }
+
+    rc = close_upstream_write(ctx, upload_drained);
+    if (rc != NGX_OK) {
+        goto failed;
+    }
+
+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    idle_timeout = tscf->idle_timeout;
+
+    if (ngx_handle_write_event(pc->write, 0) != NGX_OK ||
+        ngx_handle_read_event(pc->read, pc->read->eof ? NGX_CLOSE_EVENT
+                                                      : NGX_OK) != NGX_OK ||
+        ngx_handle_write_event(c->write, clcf->send_lowat) != NGX_OK) {
+        rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+        goto failed;
+    }
+
+    flags = c->read->eof ? NGX_CLOSE_EVENT : NGX_OK;
+    if (ngx_handle_read_event(c->read, flags) != NGX_OK) {
+        rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+        goto failed;
+    }
+
+    if (activity) {
+        tunnel_utils_clear_timer(pc->read);
+        tunnel_utils_clear_timer(pc->write);
+        tunnel_utils_clear_timer(c->read);
+        tunnel_utils_clear_timer(c->write);
+
+        tunnel_utils_update_idle_timer(pc->write, idle_timeout);
+        tunnel_utils_update_idle_timer(pc->read, idle_timeout);
+        tunnel_utils_update_idle_timer(c->write, idle_timeout);
+        tunnel_utils_update_idle_timer(c->read, idle_timeout);
+        ctx->read_again_event_posted = 0;
+    }
+
+    if (!ctx->read_again_event_posted && upload_drained && r->reading_body &&
+        !ctx->downstream_eof && !pc->read->eof) {
+        tunnel_relay_post_downstream_read(ctx);
+    }
+
+    return;
+
+failed:
+    tunnel_relay_finalize(ctx, rc == NGX_DONE ? NGX_OK : rc);
 }
 
 void
@@ -214,79 +361,42 @@ tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx)
     }
 
     ngx_post_event(rev, &ngx_posted_events);
-    ctx->downstream_read_posted = 1;
-}
-
-static void
-tunnel_relay_finalize_on_error(ngx_http_request_t    *r,
-                               ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
-{
-    /*
-     * Error finalization path for callbacks that lost module context.  The
-     * normal path uses tunnel_relay_finalize(); without ctx, only clear a
-     * possible request-body hold before handing the request back to nginx.
-     */
-    if (ctx != NULL) {
-        tunnel_relay_finalize(ctx, rc);
-        return;
-    }
-
-    /*
-     * This is deliberately conservative.  If the tunnel context exists it
-     * owns the exact request-body ref flags; without it, reading_body or an
-     * allocated request_body is the only signal available.
-     */
-    if (r->reading_body || r->request_body != NULL) {
-        if (r->main->count > 1) {
-            r->main->count--;
-        }
-    }
-
-    ngx_http_finalize_request(r, rc);
+    ctx->read_again_event_posted = 1;
 }
 
 void
 tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 {
-    ngx_http_request_t *r;
+    ngx_connection_t    *c;
+    ngx_connection_t    *pc;
+    ngx_event_t         *rev;
+    ngx_http_request_t  *r;
+    ngx_http_upstream_t *u;
 
-    if (ctx->finalized) {
+    if (ctx == NULL || ctx->finalized) {
         return;
     }
 
     ctx->finalized = 1;
     r = ctx->request;
+    c = r->connection;
+    u = r->upstream;
 
-    /*
-     * Release the reference acquired by ngx_http_read_client_request_body().
-     * Without this, any tunnel exit that isn't a natural client-body EOF
-     * (upstream close, timeout, relay error) leaves r->main->count above
-     * zero, so ngx_http_free_request() never runs and the request pool
-     * (tunnel buffers, padding buffer, ctx) is held until the H2/H3
-     * transport connection itself closes.
-     */
-    tunnel_utils_release_request_body_ref(ctx);
+    rev = c->read;
+    if (ctx->read_again_event_posted && rev->posted) {
+        ngx_delete_posted_event(rev);
+    }
 
-    /*
-     * Release the reference from r->main->count++ in
-     * ngx_http_tunnel_content_handler(). The upstream module normally
-     * balances this in ngx_http_upstream_finalize_request(), but for
-     * stream protocols process_header returns NGX_DONE and the upstream
-     * module just returns without running its finalize path.
-     */
-    tunnel_utils_release_content_ref(ctx);
+    ctx->read_again_event_posted = 0;
+
+    if (ctx->content_handler_ref) {
+        ctx->content_handler_ref = 0;
+        if (r->main->count > 1) {
+            r->main->count--;
+        }
+    }
 
     if (tunnel_relay_is_stream_downstream(r)) {
-        /*
-         * For any tunnel exit (success or error) on stream protocols (HTTP/2
-         * and HTTP/3), mark the stream as EOF. This prevents nginx from
-         * attempting to send stream reset frames (RST_STREAM for HTTP/2,
-         * CANCEL_STREAM for HTTP/3) during cleanup. Such sends can fail if
-         * the stream/session state has been modified by tunnel_relay_close(),
-         * and upstream failures can escalate to closing the entire connection.
-         * By marking EOF, we tell nginx the stream is cleanly closed without
-         * needing protocol-specific signaling.
-         */
         r->connection->read->eof = 1;
     }
 
@@ -295,11 +405,46 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
     if (rc == NGX_OK && tunnel_relay_is_stream_downstream(r) &&
         r->header_sent &&
         (r->http_version != NGX_HTTP_VERSION_20 ||
-         tunnel_padding_active(ctx) != NGX_OK)) {
+         tunnel_padding_active(ctx->padding) != NGX_OK)) {
         rc = ngx_http_send_special(r, NGX_HTTP_LAST);
     }
 
-    tunnel_relay_close(ctx);
+    tunnel_utils_clear_timer(c->read);
+    tunnel_utils_clear_timer(c->write);
+
+    if (u != NULL) {
+        if (u->cleanup) {
+            *u->cleanup = NULL;
+            u->cleanup = NULL;
+        }
+
+        if (u->resolved && u->resolved->ctx) {
+            ngx_resolve_name_done(u->resolved->ctx);
+            u->resolved->ctx = NULL;
+        }
+
+        if (u->peer.free && u->peer.sockaddr) {
+            u->peer.free(&u->peer, u->peer.data, 0);
+            u->peer.sockaddr = NULL;
+        }
+
+        pc = u->peer.connection;
+        if (pc != NULL) {
+            tunnel_utils_clear_timer(pc->read);
+            tunnel_utils_clear_timer(pc->write);
+
+            /*
+             * ngx_close_connection(pc) does not destroy the peer pool; this
+             * relay owns it after taking over upstream, so destroy it here.
+             */
+            if (pc->pool) {
+                ngx_destroy_pool(pc->pool);
+            }
+
+            ngx_close_connection(pc);
+            u->peer.connection = NULL;
+        }
+    }
 
     if (r->header_sent && rc >= NGX_HTTP_SPECIAL_RESPONSE) {
         rc = NGX_ERROR;
@@ -311,104 +456,326 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 void
 tunnel_relay_cleanup(void *data)
 {
-    ngx_http_tunnel_ctx_t *ctx;
-
-    ctx = data;
-    if (ctx->finalized) {
-        return;
-    }
-
-    ctx->finalized = 1;
-
-    /*
-     * Cleanup runs while nginx is freeing the request.  Close peer resources
-     * and release the request-body reference if this tunnel acquired one.
-     * If the stream is being terminated, nginx runs cleanup before the final
-     * close_request() count check, so the content-handler reference must be
-     * balanced here as well.  During normal free_request() cleanup,
-     * terminated is not set and tunnel_relay_finalize() owns the balance.
-     */
-    if (ctx->request->main->terminated) {
-        tunnel_utils_release_content_ref(ctx);
-    }
-
-    tunnel_relay_close(ctx);
-}
-
-void
-tunnel_relay_close(ngx_http_tunnel_ctx_t *ctx)
-{
-    ngx_connection_t    *c;
-    ngx_connection_t    *pc;
-    ngx_http_request_t  *r;
-    ngx_http_upstream_t *u;
-
-    r = ctx->request;
-    c = r->connection;
-    u = r->upstream;
-
-    tunnel_relay_cancel_downstream_read(ctx);
-    tunnel_utils_release_request_body_ref(ctx);
-
-    tunnel_utils_clear_timer(c->read);
-    tunnel_utils_clear_timer(c->write);
-
-    if (u == NULL) {
-        return;
-    }
-
-    /*
-     * The stream relay finalizes the HTTP request itself after taking over
-     * from upstream.  Disarm nginx upstream cleanup so request cleanup does
-     * not re-enter upstream finalization on an already closed tunnel.
-     */
-    if (u->cleanup) {
-        *u->cleanup = NULL;
-        u->cleanup = NULL;
-    }
-
-    if (u->resolved && u->resolved->ctx) {
-        ngx_resolve_name_done(u->resolved->ctx);
-        u->resolved->ctx = NULL;
-    }
-
-    if (u->peer.free && u->peer.sockaddr) {
-        u->peer.free(&u->peer, u->peer.data, 0);
-        u->peer.sockaddr = NULL;
-    }
-
-    pc = u->peer.connection;
-    if (pc != NULL) {
-        tunnel_utils_clear_timer(pc->read);
-        tunnel_utils_clear_timer(pc->write);
-
-        /* A subtle memory leak if not destroyed */
-        if (pc->pool) {
-            ngx_destroy_pool(pc->pool);
-        }
-
-        ngx_close_connection(pc);
-        u->peer.connection = NULL;
-    }
+    tunnel_relay_finalize(data, NGX_DONE);
 }
 
 static void
-tunnel_relay_cancel_downstream_read(ngx_http_tunnel_ctx_t *ctx)
+request_body_post_handler(ngx_http_request_t *r)
 {
-    ngx_event_t *rev;
-
-    rev = ctx->request->connection->read;
-
-    /*
-     * The stream relay can self-post c->read as a wakeup. Remove only the
-     * event posted by this module before closing: after the request is freed,
-     * a stale relay wakeup would fire on a dead stream and re-enter request
-     * finalization.
-     */
-    if (ctx->downstream_read_posted && rev->posted) {
-        ngx_delete_posted_event(rev);
+    if (r->main->count > 1) {
+        r->main->count--;
     }
 
-    ctx->downstream_read_posted = 0;
-    ctx->stall_wakeup_posted = 0;
+    return;
+}
+
+static ngx_int_t
+recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
+{
+    ngx_int_t           rc;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
+
+    if (ctx->downstream_chain != NULL || ctx->downstream_eof) {
+        return NGX_OK;
+    }
+
+    if (!r->reading_body) {
+        if (r->request_body != NULL && r->request_body->bufs != NULL) {
+            ctx->downstream_chain = r->request_body->bufs;
+            r->request_body->bufs = NULL;
+            *activity = 1;
+        } else {
+            ctx->downstream_eof = 1;
+        }
+
+        return NGX_OK;
+    }
+
+    rc = ngx_http_read_unbuffered_request_body(r);
+    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+        return rc;
+    }
+
+    if (r->request_body != NULL && r->request_body->bufs != NULL) {
+        ctx->downstream_chain = r->request_body->bufs;
+        r->request_body->bufs = NULL;
+        *activity = 1;
+    } else if (rc == NGX_OK && !r->reading_body) {
+        ctx->downstream_eof = 1;
+    }
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
+{
+    ssize_t             n;
+    size_t              size;
+    ngx_buf_t          *b;
+    ngx_connection_t   *pc;
+    ngx_http_request_t *r;
+    ngx_int_t           rc;
+
+    r = ctx->request;
+    pc = r->upstream->peer.connection;
+    b = ctx->upstream_buffer;
+
+    tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+
+    if (b->pos == b->last) {
+        b->pos = b->start;
+        b->last = b->start;
+
+        if (tunnel_padding_active(ctx->padding) == NGX_OK &&
+            ctx->padding->downstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
+            rc = tunnel_padding_decode_downstream(
+                ctx->padding, r, &ctx->downstream_chain, ctx->downstream_eof, b,
+                activity);
+            if (rc != NGX_OK && rc != NGX_AGAIN && rc != NGX_DECLINED) {
+                return rc;
+            }
+
+            if (rc != NGX_DECLINED && b->pos == b->last) {
+                return NGX_OK;
+            }
+        }
+
+        if (ctx->downstream_chain != NULL && b->pos == b->last) {
+            if (tunnel_utils_copy_chain_to_buffer(r, &ctx->downstream_chain, b,
+                                                  (size_t)-1)) {
+                *activity = 1;
+            }
+        }
+    }
+
+    if (!pc->write->ready || b->pos == b->last) {
+        return NGX_OK;
+    }
+
+    size = b->last - b->pos;
+    n = pc->send(pc, b->pos, size);
+
+    if (n == NGX_AGAIN) {
+        return NGX_OK;
+    }
+
+    if (n == NGX_ERROR) {
+        return NGX_DONE;
+    }
+
+    if (n > 0) {
+        b->pos += n;
+        *activity = 1;
+
+        if (b->pos == b->last) {
+            b->pos = b->start;
+            b->last = b->start;
+            tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+        }
+    }
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
+{
+    ssize_t             n;
+    size_t              reserve, size;
+    ngx_buf_t          *b;
+    ngx_connection_t   *pc;
+    ngx_http_request_t *r;
+    ngx_int_t           rc;
+
+    r = ctx->request;
+    pc = r->upstream->peer.connection;
+    b = ctx->client_buffer;
+
+    if (pc == NULL || !pc->read->ready || b->pos != b->last ||
+        !downstream_output_idle(r, r->connection)) {
+        return NGX_OK;
+    }
+
+    b->pos = b->start;
+    b->last = b->start;
+
+    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
+        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
+        reserve = NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE;
+
+        if ((size_t)(b->end - b->start) <=
+            reserve + NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        b->last = b->start + reserve;
+        size = b->end - b->last - NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
+        size = ngx_min(size, (size_t)65535);
+    } else {
+        size = b->end - b->last;
+    }
+
+    if (size == 0) {
+        b->last = b->start;
+        return NGX_OK;
+    }
+
+    n = pc->recv(pc, b->last, size);
+
+    if (n == NGX_AGAIN) {
+        b->last = b->start;
+        return NGX_OK;
+    }
+
+    if (n == 0) {
+        b->last = b->start;
+        pc->read->eof = 1;
+        pc->read->ready = 0;
+        return NGX_OK;
+    }
+
+    if (n < 0) {
+        b->last = b->start;
+        pc->read->eof = 1;
+        pc->read->error = 1;
+        pc->read->ready = 0;
+        return NGX_DONE;
+    }
+
+    b->last += n;
+
+    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
+        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
+        rc = tunnel_padding_encode_downstream(ctx->padding, b, (size_t)n);
+        if (rc != NGX_OK) {
+            b->pos = b->start;
+            b->last = b->start;
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    *activity = 1;
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
+{
+    ngx_int_t           rc;
+    ngx_buf_t          *b;
+    u_char             *before_pos;
+    off_t               before_sent;
+    ngx_chain_t        *before_out;
+    ngx_uint_t          before_c_buffered;
+    ngx_uint_t          before_r_buffered;
+    ngx_chain_t         out;
+    ngx_connection_t   *c;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
+    c = r->connection;
+    b = ctx->client_buffer;
+
+    if (b->pos == b->last && downstream_output_idle(r, c)) {
+        return NGX_OK;
+    }
+
+    before_pos = b->pos;
+    before_sent = c->sent;
+    before_out = r->out;
+    before_r_buffered = r->buffered;
+    before_c_buffered = c->buffered;
+
+    if (!downstream_output_idle(r, c)) {
+        rc = ngx_http_output_filter(r, NULL);
+    } else {
+        out.buf = b;
+        out.next = NULL;
+
+        b->flush = 1;
+        rc = ngx_http_output_filter(r, &out);
+        b->flush = 0;
+    }
+
+    if (rc == NGX_ERROR) {
+        return NGX_DONE;
+    }
+
+    if (b->pos == b->last && downstream_output_idle(r, c)) {
+        b->pos = b->start;
+        b->last = b->start;
+    }
+
+    if (rc == NGX_OK || rc == NGX_AGAIN) {
+        if (c->sent != before_sent || b->pos != before_pos ||
+            before_out != r->out || (before_r_buffered && !r->buffered) ||
+            (before_c_buffered && !c->buffered)) {
+            *activity = 1;
+        }
+
+        return NGX_OK;
+    }
+
+    return NGX_DONE;
+}
+
+static ngx_int_t
+close_upstream_write(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t upload_drained)
+{
+    ngx_connection_t   *pc;
+    ngx_http_request_t *r;
+
+    if (!ctx->downstream_eof || !upload_drained || ctx->upstream_write_closed) {
+        return NGX_OK;
+    }
+
+    r = ctx->request;
+    pc = r->upstream->peer.connection;
+    if (pc == NULL || pc->write->error) {
+        return NGX_OK;
+    }
+
+    if (ngx_shutdown_socket(pc->fd, NGX_WRITE_SHUTDOWN) == -1) {
+        if (ngx_socket_errno == NGX_ENOTCONN ||
+            ngx_socket_errno == NGX_ECONNRESET) {
+            ctx->upstream_write_closed = 1;
+            pc->write->ready = 0;
+            return NGX_OK;
+        }
+
+        ngx_connection_error(pc, ngx_socket_errno,
+                             ngx_shutdown_socket_n " failed");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ctx->upstream_write_closed = 1;
+    pc->write->ready = 0;
+
+    return NGX_OK;
+}
+
+static ngx_inline ngx_uint_t
+downstream_output_idle(ngx_http_request_t *r, ngx_connection_t *c)
+{
+    return r->out == NULL && !r->buffered && !c->buffered;
+}
+
+static ngx_inline ngx_uint_t
+is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
+                  ngx_connection_t *c, ngx_connection_t *pc,
+                  ngx_uint_t *upload_drained)
+{
+    ngx_uint_t download_drained;
+
+    *upload_drained = (ctx->downstream_chain == NULL &&
+                       ctx->upstream_buffer->pos == ctx->upstream_buffer->last);
+
+    download_drained = (ctx->client_buffer->pos == ctx->client_buffer->last &&
+                        downstream_output_idle(r, c));
+
+    return (pc->read->eof && *upload_drained && download_drained);
 }

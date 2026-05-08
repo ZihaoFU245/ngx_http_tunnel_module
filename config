@@ -12,7 +12,6 @@ if test -n "$ngx_module_link"; then
                      $ngx_addon_dir/src/udp_relay.c \
                      $ngx_addon_dir/src/padding.c \
                      $ngx_addon_dir/src/relay.c \
-                     $ngx_addon_dir/src/relay_v2.c \
                      $ngx_addon_dir/src/utils.c"
 
     . auto/module
@@ -27,6 +26,5 @@ else
                    $ngx_addon_dir/src/udp_relay.c \
                    $ngx_addon_dir/src/padding.c \
                    $ngx_addon_dir/src/relay.c \
-                   $ngx_addon_dir/src/relay_v2.c \
                    $ngx_addon_dir/src/utils.c"
 fi
