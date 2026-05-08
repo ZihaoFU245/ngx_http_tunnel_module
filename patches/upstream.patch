@@ -1,4 +1,4 @@
-From edf0bdee20134aa3899def13e6f26a2592c4c75e Mon Sep 17 00:00:00 2001
+From b4129f004ca307911535eae37e77fb6ea3d64ba0 Mon Sep 17 00:00:00 2001
 From: zihaofu245 <172541422+ZihaoFU245@users.noreply.github.com>
 Date: Tue, 21 Apr 2026 17:16:33 +0800
 Subject: [PATCH] refactor
@@ -62,14 +62,20 @@ index b64561369..74b58f037 100644
              u->input_filter_init = ngx_http_upstream_non_buffered_filter_init;
              u->input_filter = ngx_http_upstream_non_buffered_filter;
 diff --git a/src/http/ngx_http_upstream.h b/src/http/ngx_http_upstream.h
-index 0d48db788..6a0d335a0 100644
+index 0d48db788..4560bbe9a 100644
 --- a/src/http/ngx_http_upstream.h
 +++ b/src/http/ngx_http_upstream.h
-@@ -256,8 +256,9 @@ typedef struct {
- #endif
+@@ -240,6 +240,7 @@ typedef struct {
+     unsigned                         intercept_404:1;
+     unsigned                         change_buffering:1;
+     unsigned                         preserve_output:1;
++    unsigned                         ignore_input:1;
+ 
+ #if (NGX_HTTP_SSL || NGX_COMPAT)
+     ngx_ssl_t                       *ssl;
+@@ -257,7 +258,7 @@ typedef struct {
  
      ngx_str_t                        module;
-+    ngx_uint_t                       ignore_input;
  
 -    NGX_COMPAT_BEGIN(6)
 +    NGX_COMPAT_BEGIN(5)

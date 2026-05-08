@@ -1,3 +1,6 @@
+> [!WARNING]
+> This is all experimental.
+
 This directory stores scripts to convert common blocklist 
 into Nginx maps.
 

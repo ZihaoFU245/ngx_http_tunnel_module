@@ -10,6 +10,16 @@
 **This provides a subset features of HTTP CONNECT
 over HTTP/1.1, HTTP2, and HTTP/3.**
 
+## Table of contents
+
+- [Tested nginx versions](#tested-nginx-versions)
+- [Why implement this?](#implementation-tricks)
+- [How to build?](#how-to-build)
+- [Example conf file](#example-configuration-file)
+- [Module Logic Illustration](#module-logic-illustration)
+
+## Intro
+
 ```txt
 Naive Proxy used padding scheme is implemented in here,
 works on h2 and h3 only. HTTP/1.1 is not targeted.
@@ -21,30 +31,22 @@ works on h2 and h3 only. HTTP/1.1 is not targeted.
 - [x] Proxy authentication
 - [x] Map based ACL
 - [x] Naive Style Padding Scheme
+- [x] Connect-udp with capsule protocol, without QUIC DATAGRAM
 
-Current module build relies on some nginx patches.
+Module build relies on some nginx patches.
 See patches, apply them to nginx source code,
-try `patch -p1 < /path/to/ngx_http_tunnel_module/patches/*`
-in nginx source code folder,
-then build nginx with flag:
-`--add-module=/path/to/ngx_http_tunnel_module`
-or 
-`--add-dynamic-module=/path/to/ngx_http_tunnel_module`
 
-The patches are from nginx repo PRs.
+The patches do following:
 
-1. An ongoing [nginx PR](https://github.com/nginx/nginx/pull/707)
-provide upstream module changes.
+1. Let nginx upstream module only open TCP/UDP connection
+without any input, using `ignore_input` flag.
 
-2. CONNECT needs to be allowed to pass through in Nginx
-code for v2 and v3
+2. Let h2/h3 pesudo header parsing pass nginx core.
 
 Read scripts/ to find out more information about
 map based acl.
 
 Features that are in WIP:
-
-- [ ] Extended Connect, including `connect-udp`
 ```
 
 ## Tested Nginx Versions
@@ -53,6 +55,75 @@ Features that are in WIP:
 
 - Nginx 1.30.0 is tested to work.
 
+## How to build
+
+First fetch source code
+
+```bash
+mkdir -p build
+cd build
+
+git clone https://github.com/nginx/nginx.git
+git switch --detach {version} # Checkout on specific version
+
+git clone https://github.com/ZihaoFU245/ngx_http_tunnel_module.git
+git switch --detach {version} # Checkout on specific version
+
+cd nginx
+```
+
+Apply patches in `patches/` folder, for nginx versions below
+1.30.* and including 1.30.*. Apply `header_parsing.patch` and `upstream.patch`
+For 1.31.* and above inclusion, apply `upstream-1.31.patch` instead.
+
+```bash
+git apply ../ngx_http_tunnel_module/patches/header_parsing.patch
+
+git apply ../ngx_http_tunnel_module/patches/upstream.patch
+# OR
+git apply ../ngx_http_tunnel_module/patches/upstream-1.31.patch
+# BASED ON YOUR NGINX VERSION
+```
+
+Check nginx build dependency before continue, standard build dependency.
+Below has an example build configuration.
+
+```bash
+./auto/configure \
+	--prefix=/usr/local/share/nginx \
+	--sbin-path=/usr/local/sbin/nginx \
+	--conf-path=/etc/nginx/nginx.conf \
+	--pid-path=/run/nginx.pid \
+	--lock-path=/var/lock/nginx.lock \
+	--error-log-path=/var/log/nginx/error.log \
+	--http-log-path=/var/log/nginx/access.log \
+	--http-client-body-temp-path=/var/lib/nginx/body \
+	--http-fastcgi-temp-path=/var/lib/nginx/fastcgi \
+	--http-proxy-temp-path=/var/lib/nginx/proxy \
+	--http-scgi-temp-path=/var/lib/nginx/scgi \
+	--http-uwsgi-temp-path=/var/lib/nginx/uwsgi \
+	--with-compat \
+	--with-threads \
+	--with-file-aio \
+	--with-pcre-jit \
+	--with-http_ssl_module \
+	--with-http_v2_module \
+	--with-http_v3_module \
+	--with-http_realip_module \
+	--with-http_auth_request_module \
+	--with-http_mp4_module \
+	--with-http_gunzip_module \
+	--with-http_gzip_static_module \
+	--with-cc-opt='-g -O2 -fPIC -fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=3' \
+	--with-ld-opt='-Wl,-z,relro -Wl,-z,now -fPIC' \	
+	--add-dynamic-module=../ngx_http_tunnel_module \
+	--without-http_tunnel_module
+	# Must build without http tunnel module if you use the custom module
+	# Specifically for nginx 1.31.* versions
+```
+
+Finally, run `make -j$(nproc)`.
+
 ## Implementation tricks
 
 1. It is chosen to build as a nginx module as it can reuse nginx
@@ -60,10 +131,6 @@ core functionalities, including but not limited to, mature h2/h3
 implementation, multiplexing, limit conn, upstream module.
 
 2. This module relies on nginx upstream and http_v2, see header file.
-
-3. Because the need of padding and capsule protocol (not yet implemented),
-an intermediate buffer is required. That is, we can't simply wire upstream
-module and request, the bidirectional byte relay must be explicitly handled.
 
 ## Example Configuration file
 
@@ -160,6 +227,9 @@ http {
 		# 0: deny, 1: allow, 2: deny + log, 3: allow + log.
 		# $connect_target_host is the raw CONNECT authority.
 		tunnel_acl_eval_on $is_granted;
+
+		tunnel_udp on; 					# Enable connect udp with capsule protocol
+		tunnel_udp_path $request_uri; 	# Path variable for parsing masque path
 
 		# location blocks are recommended to set after
 		# tunnel configurations, as tunnel module
