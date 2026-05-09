@@ -18,6 +18,8 @@
  * No need to manually handle file descriptor anymore.
  */
 
+#include <ngx_crypt.h>
+
 #include "ngx_http_tunnel_module.h"
 
 #define NGX_HTTP_TUNNEL_AUTH_BUF_SIZE 2048

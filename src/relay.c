@@ -59,6 +59,11 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
     if (clcf->tcp_nodelay) {
+        if (r->http_version == NGX_HTTP_VERSION_20 &&
+            ngx_tcp_nodelay(c) != NGX_OK) {
+            return NGX_ERROR;
+        }
+
         if (ngx_tcp_nodelay(pc) != NGX_OK) {
             return NGX_ERROR;
         }

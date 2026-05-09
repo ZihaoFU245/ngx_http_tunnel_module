@@ -8,12 +8,7 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
-#include <ngx_crypt.h>
-#include <ngx_event_connect.h>
 #include <ngx_http.h>
-#include <ngx_http_upstream.h>
-#include <ngx_http_upstream_round_robin.h>
-#include <ngx_http_v2.h>
 
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 #define NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE 3
