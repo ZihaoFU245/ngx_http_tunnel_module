@@ -507,11 +507,21 @@ tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
     h2c->send_window -= frame_size;
     stream->send_window -= frame_size;
     stream->queued++;
-    r->connection->buffered |= NGX_HTTP_V2_BUFFERED;
-    r->connection->write->active = 1;
-    r->connection->write->ready = 0;
 
-    (void)ngx_http_v2_send_output_queue(h2c);
+    stream->blocked = 1;
+    if (ngx_http_v2_send_output_queue(h2c) == NGX_ERROR) {
+        r->connection->error = 1;
+    }
+    stream->blocked = 0;
+
+    if (stream->queued) {
+        r->connection->buffered |= NGX_HTTP_V2_BUFFERED;
+        r->connection->write->active = 1;
+        r->connection->write->ready = 0;
+        return;
+    }
+
+    r->connection->buffered &= ~NGX_HTTP_V2_BUFFERED;
 }
 
 static ngx_int_t
