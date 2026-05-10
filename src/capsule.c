@@ -1,3 +1,11 @@
+
+/*
+ * Copyright(c) 2026 ZihaoFU245
+ *
+ * Reusable capsule protocol implementation
+ * for connect udp mainly.
+ */
+
 #include "ngx_http_tunnel_module.h"
 
 static ngx_int_t capsule_decode_varint(u_char **pos, u_char *last,

@@ -1,6 +1,10 @@
+
 /*
+ * Copyright(c) 2026 ZihaoFU245
+ *
  * Tunnel Module Core
  */
+
 #include "ngx_http_tunnel_module.h"
 
 static ngx_command_t ngx_http_tunnel_commands[] = {

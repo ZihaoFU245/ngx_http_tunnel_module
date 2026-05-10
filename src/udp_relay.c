@@ -41,6 +41,7 @@ tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx)
     ngx_connection_t           *c, *pc;
     ngx_http_cleanup_t         *cln;
     ngx_http_request_t         *r;
+    ngx_http_core_loc_conf_t   *clcf;
     ngx_http_tunnel_srv_conf_t *tscf;
     ngx_http_upstream_t        *u;
 
@@ -58,6 +59,12 @@ tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx)
 
     r->keepalive = 0;
     c->log->action = "tunneling UDP capsules";
+
+    clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
+    if (clcf->tcp_nodelay && r->http_version == NGX_HTTP_VERSION_20 &&
+        ngx_tcp_nodelay(c) != NGX_OK) {
+        return NGX_ERROR;
+    }
 
     rc = tunnel_relay_init_request_body(ctx);
     if (rc != NGX_OK) {
