@@ -5,22 +5,64 @@
  * Auth module mimics nginx core auth behaviour.
  * See `nginx/src/http/modules/ngx_http_auth*`.
  *
- * TODO: Watch nginx upstream changes, on nginx 1.31.*
- * roadmap, Proxy_Authenticate will be supported and we can
- * then eliminate it from this module. Probe resistance
- * behaviour can be done via $auth_status. We can add a helper
- * function to avoid user config, that basically does:
+ * nginx 1.31.0 added core CONNECT proxy-auth handling:
+ * ngx_http_auth_basic_user() reads Proxy-Authorization and
+ * headers_out has a dedicated Proxy-Authenticate slot.
  *
- * if ($auth_status = 405) {
- *       return 405 "Method Not Allowed";
- * }
+ * Probe resistance behaviour can be done via config entirely.
  *
  * No need to manually handle file descriptor anymore.
  */
 
-#include <ngx_crypt.h>
-
 #include "ngx_http_tunnel_module.h"
+
+char *
+ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
+                                     void *conf)
+{
+#if (nginx_version < NGX_HTTP_TUNNEL_NGINX_1_31_0)
+    ngx_http_tunnel_srv_conf_t      *tscf = conf;
+    ngx_str_t                       *value;
+    ngx_http_compile_complex_value_t ccv;
+
+    if (tscf->proxy_auth_user_file != NGX_CONF_UNSET_PTR) {
+        return "is duplicate";
+    }
+
+    tscf->proxy_auth_user_file =
+        ngx_palloc(cf->pool, sizeof(ngx_http_complex_value_t));
+    if (tscf->proxy_auth_user_file == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    value = cf->args->elts;
+
+    ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
+
+    ccv.cf = cf;
+    ccv.value = &value[1];
+    ccv.complex_value = tscf->proxy_auth_user_file;
+    ccv.zero = 1;
+    ccv.conf_prefix = 1;
+
+    if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+#endif
+
+#if (nginx_version >= NGX_HTTP_TUNNEL_NGINX_1_31_0)
+    ngx_conf_log_error(
+        NGX_LOG_EMERG, cf, 0,
+        "\"tunnel_proxy_auth_user_file\" is not supported on nginx 1.31.0+");
+    return NGX_CONF_ERROR;
+#endif
+}
+
+#if (nginx_version < NGX_HTTP_TUNNEL_NGINX_1_31_0)
+
+#include <ngx_crypt.h>
 
 #define NGX_HTTP_TUNNEL_AUTH_BUF_SIZE 2048
 
@@ -37,20 +79,16 @@ tunnel_auth_access_denied(ngx_http_request_t         *r,
 {
     /* 407 */
     if (!tscf->probe_resistance) {
-
         static ngx_str_t realm = ngx_string("Basic realm=\"proxy\"");
-
-        r->headers_out.proxy_authenticate =
-            ngx_list_push(&r->headers_out.headers);
-        if (r->headers_out.proxy_authenticate == NULL) {
+        ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
+        if (h == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        r->headers_out.proxy_authenticate->hash = 1;
-        r->headers_out.proxy_authenticate->next = NULL;
-        ngx_str_set(&r->headers_out.proxy_authenticate->key,
-                    "Proxy-Authenticate");
-        r->headers_out.proxy_authenticate->value = realm;
+        h->hash = 1;
+        h->next = NULL;
+        ngx_str_set(&h->key, "Proxy-Authenticate");
+        h->value = realm;
 
         return NGX_HTTP_PROXY_AUTH_REQUIRED;
     }
@@ -357,37 +395,4 @@ tunnel_auth_parse_basic(ngx_http_request_t *r, ngx_str_t *user,
     return NGX_OK;
 }
 
-char *
-ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
-                                     void *conf)
-{
-    ngx_http_tunnel_srv_conf_t      *tscf = conf;
-    ngx_str_t                       *value;
-    ngx_http_compile_complex_value_t ccv;
-
-    if (tscf->proxy_auth_user_file != NGX_CONF_UNSET_PTR) {
-        return "is duplicate";
-    }
-
-    tscf->proxy_auth_user_file =
-        ngx_palloc(cf->pool, sizeof(ngx_http_complex_value_t));
-    if (tscf->proxy_auth_user_file == NULL) {
-        return NGX_CONF_ERROR;
-    }
-
-    value = cf->args->elts;
-
-    ngx_memzero(&ccv, sizeof(ngx_http_compile_complex_value_t));
-
-    ccv.cf = cf;
-    ccv.value = &value[1];
-    ccv.complex_value = tscf->proxy_auth_user_file;
-    ccv.zero = 1;
-    ccv.conf_prefix = 1;
-
-    if (ngx_http_compile_complex_value(&ccv) != NGX_OK) {
-        return NGX_CONF_ERROR;
-    }
-
-    return NGX_CONF_OK;
-}
+#endif

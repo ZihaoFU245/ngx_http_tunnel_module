@@ -134,12 +134,14 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
+#if (nginx_version < NGX_HTTP_TUNNEL_NGINX_1_31_0)
     rc = tunnel_auth_check(r, tscf);
     if (rc != NGX_OK) {
         /* Nginx Core by default send a keepalive header */
         r->keepalive = 0;
         return rc;
     }
+#endif
 
     rc = tunnel_acl_eval(r);
     if (rc != NGX_OK) {
@@ -329,6 +331,18 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
     ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
                              prev->probe_resistance_allow_methods, "");
+
+#if (nginx_version >= NGX_HTTP_TUNNEL_NGINX_1_31_0)
+    if (conf->probe_resistance ||
+        conf->probe_resistance_allow_methods.len != 0) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "\"tunnel_probe_resistance\" is not supported on "
+                           "nginx 1.31.0 or newer; use nginx core "
+                           "\"auth_basic\" for proxy authentication");
+        return NGX_CONF_ERROR;
+    }
+#endif
+
     ngx_conf_merge_value(conf->padding, prev->padding, 0);
     ngx_conf_merge_value(conf->udp, prev->udp, 1);
     ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);

@@ -13,6 +13,7 @@
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 #define NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE 3
 #define NGX_HTTP_TUNNEL_MAX_PADDING_SIZE 255
+#define NGX_HTTP_TUNNEL_NGINX_1_31_0 1031000
 
 #define CAPSULE_DATAGRAM 0x00
 #define CAPSULE_DATAGRAM_CONTEXT_ID 0x00
@@ -98,11 +99,12 @@ ngx_int_t tunnel_get_target_host_handler(ngx_http_request_t        *r,
                                          ngx_http_variable_value_t *v,
                                          uintptr_t                  data);
 ngx_int_t tunnel_acl_eval(ngx_http_request_t *r);
-ngx_int_t tunnel_auth_set_proxy_authenticate(ngx_http_request_t *r);
+#if (nginx_version < NGX_HTTP_TUNNEL_NGINX_1_31_0)
 ngx_int_t tunnel_auth_access_denied(ngx_http_request_t         *r,
                                     ngx_http_tunnel_srv_conf_t *tscf);
 ngx_int_t tunnel_auth_check(ngx_http_request_t         *r,
                             ngx_http_tunnel_srv_conf_t *tscf);
+#endif
 
 ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t    *r,
                                             ngx_http_tunnel_ctx_t *ctx);

@@ -41,7 +41,7 @@ The patches do following:
 1. Let nginx upstream module only open TCP/UDP connection
 without any input, using `ignore_input` flag.
 
-2. Let h2/h3 pesudo header parsing pass nginx core.
+2. Let h2/h3 pseudo header parsing pass nginx core.
 
 Read scripts/ to find out more information about
 map based acl.
@@ -75,6 +75,10 @@ cd nginx
 Apply patches in `patches/` folder, for nginx versions below
 1.30.* and including 1.30.*. Apply `header_parsing.patch` and `upstream.patch`
 For 1.31.* and above inclusion, apply `upstream-1.31.patch` instead.
+
+On nginx 1.31.0 and newer, nginx core handles proxy authentication for
+CONNECT requests. This module therefore does not build its `auth.c` auth path
+on those versions.
 
 ```bash
 git apply ../ngx_http_tunnel_module/patches/header_parsing.patch
@@ -134,6 +138,14 @@ implementation, multiplexing, limit conn, upstream module.
 
 ## Example Configuration file
 
+> [!IMPORTANT]
+> Check `examples/` for minimum configuration files.
+> Proxy Auth is different on nginx version >= 1.31.0, as
+> nginx core supports proxy auth and there is no need to
+> implement it again.
+
+Below is a detailed config flags illustration.
+
 ```nginx
 load_module ngx_http_tunnel_module.so;  # If build as an dynamic module
 
@@ -183,6 +195,12 @@ http {
 		~(^|:)static\.a-ads\.com(:|$)   2;		# deny + log
 	}
 
+	# Use Proxy Auth but on CONNECT only
+	map $request_method $connect_auth_realm {
+        default  off;
+        CONNECT  "proxy";
+    }
+
 	server {
 		listen 0.0.0.0:443 ssl;
 		listen 0.0.0.0:443 quic reuseport;
@@ -209,16 +227,23 @@ http {
 		ssl_certificate_key privkey.pem;
 
 		tunnel_pass;                        	# Enable tunnel module
-		tunnel_buffer_size 2M;              	# Buffer size for tunnel relay 
+		tunnel_buffer_size 128k;              	# Buffer size for tunnel relay 
+
+		# NGINX 1.30 AND OLDER ONLY
 		tunnel_proxy_auth_user_file /path/to/.htaccess;
-
-		# off: auth failures return 407
-		# on: auth failures return 405 like nginx method rejection
 		tunnel_probe_resistance off;
-
-		# Empty by default, matching nginx core CONNECT rejection:
-		# Set this unless you know what you are doing
 		tunnel_probe_resistance_allow_methods "";
+
+		# NGINX 1.31.0 AND NEWER
+		# auth_basic $connect_auth_realm;
+		# auth_basic_user_file /path/to/.htaccess;
+		# error_page 407 =405 @probe_resistance;
+
+		# location @probe_resistance {
+		#	 internal;
+		#	 # add_header Allow "GET, POST, OPTIONS" always;
+		# 	 return 405;
+		# }
 
         tunnel_padding off;                 	# Opt in padding scheme for h2/h3
         tunnel_connect_timeout 60s;
@@ -228,8 +253,8 @@ http {
 		# $connect_target_host is the raw CONNECT authority.
 		tunnel_acl_eval_on $is_granted;
 
-		tunnel_udp on; 					# Enable connect udp with capsule protocol
-		tunnel_udp_path $request_uri; 	# Path variable for parsing masque path
+		tunnel_udp on; 							# Enable connect udp with capsule protocol
+		tunnel_udp_path $request_uri; 			# Path variable for parsing masque path
 
 		# location blocks are recommended to set after
 		# tunnel configurations, as tunnel module
