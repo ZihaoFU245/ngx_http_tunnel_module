@@ -16,7 +16,7 @@ over HTTP/1.1, HTTP2, and HTTP/3.**
 - [Why implement this?](#implementation-tricks)
 - [How to build?](#how-to-build)
 - [Example conf file](#example-configuration-file)
-- [Module Logic Illustration](#module-logic-illustration)
+- [Detailed config directives](#config-directives)
 
 ## Intro
 
@@ -56,6 +56,11 @@ Features that are in WIP:
 - Nginx 1.30.0 is tested to work.
 
 ## How to build
+
+> [!IMPORTANT]
+> For nginx version 1.31.0 and later. You must configure with
+> flag `--without-ngx_http_tunnel_module`, compile without vanilla
+> nginx tunnel module.
 
 First fetch source code
 
@@ -138,7 +143,7 @@ implementation, multiplexing, limit conn, upstream module.
 
 ## Example Configuration file
 
-> [!IMPORTANT]
+> [!TIP]
 > Check `examples/` for minimum configuration files.
 > Proxy Auth is different on nginx version >= 1.31.0, as
 > nginx core supports proxy auth and there is no need to
@@ -277,18 +282,34 @@ http {
 }
 ```
 
-## Module logic illustration
+## Config Directives
 
-```txt
-Tunnel Init Invoked
-    -> Access Phase Handler
-        -> Auth checking
-            -> Check tunnel_probe_resistance
-        -> Assign Content phase handler (Prevent other module preempt requests)
-    -> Content Phase Handler
-        -> Context and Buffer allocation
-        -> Check padding needed
-        -> init upstream peer
-        -> Assign upstream handlers
-        -> init upstream
-```
+1. `tunnel_pass`: Enable tunnel module, allow HTTP connect.
+
+2. `tunnel_buffer_size`: Size, a symmetric buffer size for tunnel module,
+for upstream buffer and client buffer. Default to 128k, with minimum 64k.
+
+3. `tunnel_proxy_auth_user_file`: path to .htaccess file. This will only support
+nginx version 1.30 and below.
+
+4. `tunnel_probe_resistance`: Default to off. When auth failed, it will return 405.
+Only nginx 1.30 and below are supported.
+
+5. `tunnel_probe_resistance_allow_methods`: Default to an empty string. And will
+not send "Allow" header when it is empty, used with `tunnel_probe_resistance`.
+
+6. `tunnel_padding`: Default to off. Enable padding scheme defined by naiveproxy.
+
+7. `tunnel_connect_timeout`: Time, default to 60s. On timeout, internal server error
+will be send. This happens when upstream server has no response.
+
+8. `tunnel_idle_timeout`: Time, default to 30s. On timeout, tunnel will be closed.
+
+9. `tunnel_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
+deny/allow. 2/3 means access deny/allow with logging.
+
+10. `tunnel_udp`: Default to on. With connect udp over MASQUE capsule protocol. Client
+send header must present `capsule-protocol = ?1`, otherwise 400 rejected.
+
+11. `tunnel_udp_path`: Complex value, MASQUE encode target host and port in path. Default
+to `$request_uri`.
