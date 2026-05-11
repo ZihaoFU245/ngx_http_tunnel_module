@@ -10,6 +10,8 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include "tun.h"
+
 #define NGX_HTTP_TUNNEL_K_FIRST_PADDINGS 8
 #define NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE 3
 #define NGX_HTTP_TUNNEL_MAX_PADDING_SIZE 255
@@ -55,6 +57,11 @@ typedef struct {
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
+	ngx_flag_t 							connect_ip;
+	ngx_http_complex_value_t 			*connect_ip_tun_path;
+} ngx_http_tunnel_loc_conf_t;
+
+typedef struct {
     u_char                              padding_header[3];
     ngx_str_t                           response_value;
     size_t                              payload_size;
@@ -85,11 +92,14 @@ typedef struct {
 extern ngx_module_t ngx_http_tunnel_module;
 
 char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+char *tunnel_connect_ip(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *tunnel_acl_eval_on(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *ngx_http_tunnel_proxy_auth_user_file(ngx_conf_t *cf, ngx_command_t *cmd,
                                            void *conf);
 void *ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf);
 char *ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
+void *ngx_http_tunnel_create_loc_conf(ngx_conf_t *cf);
+char *ngx_http_tunnel_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
 ngx_int_t ngx_http_tunnel_init(ngx_conf_t *cf);
 ngx_int_t ngx_http_tunnel_access_handler(ngx_http_request_t *r);
 ngx_int_t ngx_tunnel_skip_phase_handler(ngx_http_request_t *r);
@@ -124,6 +134,8 @@ ngx_int_t tunnel_udp_init_upstream(ngx_http_request_t    *r,
                                    ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
 ngx_int_t tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx);
+
+ngx_int_t tunnel_connect_ip_is_request(ngx_http_request_t *r);
 
 ngx_int_t tunnel_capsule_is_header_present(ngx_http_request_t *r);
 size_t    tunnel_capsule_varint_size(uint64_t value);

@@ -154,6 +154,10 @@ tunnel_utils_match_protocol(ngx_http_request_t *r)
         return CONNECT_UDP;
     }
 
+    if (tunnel_connect_ip_is_request(r) == NGX_OK) {
+        return CONNECT_IP;
+    }
+
     /* Other matching will go here */
 
     return UNKNOWN_PROTOCOL;

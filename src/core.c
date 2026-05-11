@@ -79,6 +79,20 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, udp_path),
      NULL},
 
+    {ngx_string("tunnel_connect_ip"),
+     NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS,
+     tunnel_connect_ip,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     0,
+     NULL},
+
+    {ngx_string("tunnel_connect_ip_tun_path"),
+     NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+     ngx_http_set_complex_value_slot,
+     NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_loc_conf_t, connect_ip_tun_path),
+     NULL},
+
 	{ngx_string("tunnel_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      tunnel_acl_eval_on,
@@ -99,8 +113,8 @@ static ngx_http_module_t ngx_http_tunnel_module_ctx = {
     ngx_http_tunnel_create_srv_conf,
     ngx_http_tunnel_merge_srv_conf,
 
-    NULL,
-	NULL
+    ngx_http_tunnel_create_loc_conf,
+	ngx_http_tunnel_merge_loc_conf
 };
 
 ngx_module_t ngx_http_tunnel_module = {
@@ -412,6 +426,42 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
                 return NGX_CONF_ERROR;
             }
         }
+    }
+
+    return NGX_CONF_OK;
+}
+
+void *
+ngx_http_tunnel_create_loc_conf(ngx_conf_t *cf)
+{
+    ngx_http_tunnel_loc_conf_t *conf;
+
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_tunnel_loc_conf_t));
+    if (conf == NULL) {
+        return NULL;
+    }
+
+    conf->connect_ip = NGX_CONF_UNSET;
+    conf->connect_ip_tun_path = NGX_CONF_UNSET_PTR;
+
+    return conf;
+}
+
+char *
+ngx_http_tunnel_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
+{
+    ngx_http_tunnel_loc_conf_t *prev = parent;
+    ngx_http_tunnel_loc_conf_t *conf = child;
+
+    ngx_conf_merge_value(conf->connect_ip, prev->connect_ip, 0);
+    ngx_conf_merge_ptr_value(conf->connect_ip_tun_path,
+                             prev->connect_ip_tun_path, NULL);
+
+    if (conf->connect_ip && conf->connect_ip_tun_path == NULL) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "\"tunnel_connect_ip_tun_path\" must be specified "
+                           "when \"tunnel_connect_ip\" is enabled");
+        return NGX_CONF_ERROR;
     }
 
     return NGX_CONF_OK;

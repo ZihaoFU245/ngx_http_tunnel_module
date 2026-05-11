@@ -54,6 +54,7 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
 {
     ngx_int_t                   rc;
     ngx_http_tunnel_protocol_t  proto;
+    ngx_http_tunnel_loc_conf_t *tlcf;
     ngx_http_tunnel_srv_conf_t *tscf;
 
     /*
@@ -94,8 +95,24 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
         ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
         return tunnel_udp_init_upstream(r, ctx);
 
-    case WEBSOCKET:
     case CONNECT_IP:
+        tlcf = ngx_http_get_module_loc_conf(r, ngx_http_tunnel_module);
+
+        if (tlcf == NULL || !tlcf->connect_ip) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "tunnel connect-ip is disabled");
+            return NGX_HTTP_NOT_ALLOWED;
+        }
+
+        if (tlcf->connect_ip_tun_path == NULL) {
+            ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                          "tunnel connect-ip TUN path is not configured");
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        return NGX_HTTP_NOT_IMPLEMENTED;
+
+    case WEBSOCKET:
     case CONNECT_TCP:
         return NGX_HTTP_NOT_IMPLEMENTED;
 

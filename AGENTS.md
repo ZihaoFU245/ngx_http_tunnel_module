@@ -44,70 +44,44 @@ editing.
 
 # New job
 
-Read existing `acl.c` implementation, it is using upstream {...}
-directive, with an exact match style. 
+Add support for connect-ip.
 
-This new job is refactoring:
+Three new files already created, `connect_ip.c`, `tun.h` and `tun.c`.
 
-1. The old upstream {...} needs to be removed, as it is clumsy
+Only implement connect ip over HTTP Data frame that is under capsules.
 
-2. Adopt nginx map directive.
+Existing Capsule code is in `capsule.c`, function `tunnel_capsule_*_datagram`
+may be reused.
 
-3. Add new variable $connect_target_host, which contains the connect target
-host:port, or sometimes only host:
+1. Add new config `tunnel_connect_ip`, `tunnel_connect_ip_tun_path`,
+a complex value.
 
-```log
-127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 176.58.88.183 HTTP/2.0" 499 0 "-" "-"
-127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 185.40.234.176 HTTP/2.0" 499 0 "-" "-"
-127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 208.83.233.233 HTTP/2.0" 499 0 "-" "-"
-127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 185.34.3.207 HTTP/2.0" 499 0 "-" "-"
-127.0.0.1 - - [03/May/2026:07:00:46 +0000] "CONNECT 172.237.28.183 HTTP/2.0" 499 0 "-" "-"
-127.0.0.1 - - [03/May/2026:07:01:15 +0000] "CONNECT 192.200.0.101 HTTP/2.0" 200 2533 "-" "-"
-127.0.0.1 - - [03/May/2026:07:01:17 +0000] "CONNECT 192.73.243.141 HTTP/2.0" 200 3654 "-" "-"
-127.0.0.1 - - [03/May/2026:07:01:18 +0000] "CONNECT 104.248.8.210 HTTP/2.0" 200 3400 "-" "-"
-```
+Requirements:
 
-Some logs.
+- tunnel_connect_ip can be in location { ... } block.
+- tunnel_connect_ip_tun_path must be specified, and stored in a complex value.
+- `tun.*` code MUST only support Linux now, and in #if (LINUX) #endif blocks.
+on other platforms other then linux, it must not be compiled. The flags are
+provided nginx, you must not introduce new dependency.
+- `tunnel_connect_ip` in location block, then other location blocks must not
+accept connect-ip packets. That is under `location /ip-tunnel { tunnel_connect_ip; }`,
+connect ip is allowed only in `tunnel_connect_ip` if it is not set in server block.
+- `tun.h` declares helper functions to tun related functions. The TUN submodule MUST
+not create any `tun`, it MUST be user provided TUN. 
+- You MUST NOT implement `connect_ip.c` now, only `tun`.
+- `tun` module must not allocate any memory itself. It needs to allocate from nginx
+request pool.
+- You MUST read nginx core, to check if any reusable components.
+- `tun` read SHALL read directly to a provided `ngx_buf_t`, write should be able to
+write from chain to `ngx_buf_t`, and send will write to kernel tun.
 
-4. In current version, url parsing is duplicated, in `acl.c`, function
-`acl_parse_target` it parsed and in `connect.c` function `tunnel_connect_parse_target`
-parsed again. Now in PREACCESS Phase, the target is parsed and stored in 
-`$connect_target_host` and in content phase, only check if it is non NULL.
+Be careful:
 
-5. Add another variable called `$tunnel_acl_is_granted`, which is converted to
-ngx_uint_t, an unsigned int.
+- Event `ngx_reload` will create new worker process and gracefully shutdown old worker
+process. So handle fd carefully, new worker process and old worker process fd.
 
-0: access deny, strictly no log
-1: access granted, strictly no log
-2: access deny + ngx log
-3: access grant + ngx log
+- read / write provided by linux kernel is blocking. You must use non blocking read write,
+if read write is unavailable, it should be cast to return NGX_AGAIN.
 
-A state machine switch case can be considered in implementation.
 
-Consider config:
 
-```nginx
-map $tunnel_target_host $tunnel_acl_is_granted {
-    hostnames;
-    default 1;
-
-    .ads.com      0;  # deny
-    .malware.com  2;  # deny + log
-}
-```
-
-Later in a server block:
-
-```nginx
-server {
-    tunnel_pass;
-    tunnel_acl_eval_on $tunnel_acl_is_granted;
-}
-```
-
-6. This is a refactor job, so everything should be optimized to shortest
-path, no stack on top. What needs to be removed, must be removed, no warpping
-allowed.
-
-7. This should expect a reduction is total LOC. As hash table and matching is
-handoff to nginx map structure.
