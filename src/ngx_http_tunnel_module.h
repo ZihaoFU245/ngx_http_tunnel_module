@@ -78,6 +78,7 @@ typedef struct {
     ngx_buf_t                           *client_buffer;
     ngx_buf_t                           *upstream_buffer;
     ngx_chain_t                         *downstream_chain;
+    ngx_connection_t                    *tun_connection;
     ngx_http_upstream_resolved_t        *resolved;
     tunnel_padding_ctx_t                *padding;
     unsigned                            finalized : 1;
@@ -136,6 +137,8 @@ ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
 ngx_int_t tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx);
 
 ngx_int_t tunnel_connect_ip_is_request(ngx_http_request_t *r);
+ngx_int_t tunnel_connect_ip_start(ngx_http_request_t    *r,
+                                  ngx_http_tunnel_ctx_t *ctx);
 
 ngx_int_t tunnel_capsule_is_header_present(ngx_http_request_t *r);
 size_t    tunnel_capsule_varint_size(uint64_t value);

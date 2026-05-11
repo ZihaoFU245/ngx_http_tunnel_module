@@ -417,6 +417,11 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
     tunnel_utils_clear_timer(c->read);
     tunnel_utils_clear_timer(c->write);
 
+    if (ctx->tun_connection != NULL) {
+        ngx_close_connection(ctx->tun_connection);
+        ctx->tun_connection = NULL;
+    }
+
     if (u != NULL) {
         if (u->cleanup) {
             *u->cleanup = NULL;

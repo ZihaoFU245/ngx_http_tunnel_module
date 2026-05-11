@@ -110,7 +110,20 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        return NGX_HTTP_NOT_IMPLEMENTED;
+        /* Do not send keepalive header */
+        r->keepalive = 0;
+
+        if (!tunnel_relay_is_stream_downstream(r)) {
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
+        rc = tunnel_capsule_is_header_present(r);
+        if (rc != NGX_OK) {
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
+        ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
+        return tunnel_connect_ip_start(r, ctx);
 
     case WEBSOCKET:
     case CONNECT_TCP:
