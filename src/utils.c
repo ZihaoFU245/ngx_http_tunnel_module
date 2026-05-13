@@ -192,38 +192,132 @@ tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
     }
 }
 
-ngx_uint_t
-tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r, ngx_chain_t **chain,
-                                  ngx_buf_t *b, size_t limit)
+void
+tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in)
+{
+    ngx_chain_t **ll;
+
+    if (in == NULL) {
+        return;
+    }
+
+    ll = chain;
+    while (*ll != NULL) {
+        ll = &(*ll)->next;
+    }
+
+    *ll = in;
+}
+
+ngx_int_t
+tunnel_utils_alloc_chain_buf(ngx_http_request_t *r, ngx_chain_t **cl,
+                             size_t size)
+{
+    ngx_buf_t *b;
+
+    *cl = ngx_alloc_chain_link(r->pool);
+    if (*cl == NULL) {
+        return NGX_ERROR;
+    }
+
+    b = ngx_create_temp_buf(r->pool, size);
+    if (b == NULL) {
+        return NGX_ERROR;
+    }
+
+    (*cl)->buf = b;
+    (*cl)->next = NULL;
+
+    return NGX_OK;
+}
+
+ngx_int_t
+tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len)
+{
+    size_t n;
+
+    while (len != 0) {
+        if (chain == NULL) {
+            return NGX_AGAIN;
+        }
+
+        if (pos == NULL || pos == chain->buf->last) {
+            chain = chain->next;
+            pos = chain == NULL ? NULL : chain->buf->pos;
+            continue;
+        }
+
+        n = chain->buf->last - pos;
+        if (n >= len) {
+            return NGX_OK;
+        }
+
+        len -= n;
+        chain = chain->next;
+        pos = chain == NULL ? NULL : chain->buf->pos;
+    }
+
+    return NGX_OK;
+}
+
+ngx_int_t
+tunnel_utils_chain_read(ngx_chain_t **chain, u_char **pos, u_char *dst,
+                        size_t len)
 {
     size_t       n;
-    size_t       size;
-    ngx_uint_t   copied;
-    ngx_buf_t   *src;
     ngx_chain_t *cl;
+    u_char      *p;
 
-    copied = 0;
+    cl = *chain;
+    p = *pos;
 
-    for (;;) {
-        tunnel_utils_free_consumed_chain(r, chain, NULL);
-
-        cl = *chain;
-        if (cl == NULL || b->last == b->end || limit == 0) {
-            return copied;
+    while (len != 0) {
+        if (cl == NULL) {
+            return NGX_AGAIN;
         }
 
-        src = cl->buf;
-        size = b->end - b->last;
-        n = ngx_min((size_t)ngx_buf_size(src), size);
-        n = ngx_min(n, limit);
-
-        if (n == 0) {
-            return copied;
+        if (p == NULL || p == cl->buf->last) {
+            cl = cl->next;
+            p = cl == NULL ? NULL : cl->buf->pos;
+            continue;
         }
 
-        b->last = ngx_cpymem(b->last, src->pos, n);
-        src->pos += n;
-        limit -= n;
-        copied = 1;
+        n = ngx_min(len, (size_t)(cl->buf->last - p));
+        dst = ngx_cpymem(dst, p, n);
+        p += n;
+        cl->buf->pos = p;
+        len -= n;
     }
+
+    *chain = cl;
+    *pos = p;
+
+    return NGX_OK;
+}
+
+void
+tunnel_utils_chain_advance(ngx_chain_t **chain, u_char **pos, size_t len)
+{
+    size_t       n;
+    ngx_chain_t *cl;
+    u_char      *p;
+
+    cl = *chain;
+    p = *pos;
+
+    while (len != 0 && cl != NULL) {
+        if (p == NULL || p == cl->buf->last) {
+            cl = cl->next;
+            p = cl == NULL ? NULL : cl->buf->pos;
+            continue;
+        }
+
+        n = ngx_min(len, (size_t)(cl->buf->last - p));
+        p += n;
+        cl->buf->pos = p;
+        len -= n;
+    }
+
+    *chain = cl;
+    *pos = p;
 }

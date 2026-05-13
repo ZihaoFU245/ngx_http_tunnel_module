@@ -64,7 +64,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
             return NGX_ERROR;
         }
 
-        if (ngx_tcp_nodelay(pc) != NGX_OK) {
+        if (u->peer.type != SOCK_DGRAM && ngx_tcp_nodelay(pc) != NGX_OK) {
             return NGX_ERROR;
         }
     }
@@ -482,13 +482,14 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
 
-    if (ctx->downstream_chain != NULL || ctx->downstream_eof) {
+    if (ctx->upstream_out != NULL || ctx->downstream_eof) {
         return NGX_OK;
     }
 
     if (!r->reading_body) {
         if (r->request_body != NULL && r->request_body->bufs != NULL) {
-            ctx->downstream_chain = r->request_body->bufs;
+            tunnel_utils_append_chain(&ctx->downstream_in,
+                                      r->request_body->bufs);
             r->request_body->bufs = NULL;
             *activity = 1;
         } else {
@@ -504,7 +505,7 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (r->request_body != NULL && r->request_body->bufs != NULL) {
-        ctx->downstream_chain = r->request_body->bufs;
+        tunnel_utils_append_chain(&ctx->downstream_in, r->request_body->bufs);
         r->request_body->bufs = NULL;
         *activity = 1;
     } else if (rc == NGX_OK && !r->reading_body) {
@@ -520,46 +521,36 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     ssize_t             n;
     size_t              size;
     ngx_buf_t          *b;
+    ngx_chain_t        *cl;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
     ngx_int_t           rc;
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    b = ctx->upstream_buffer;
 
-    tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+    tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
+    tunnel_utils_free_consumed_chain(r, &ctx->upstream_out, NULL);
 
-    if (b->pos == b->last) {
-        b->pos = b->start;
-        b->last = b->start;
-
-        if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-            ctx->padding->downstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-            rc = tunnel_padding_decode_downstream(
-                ctx->padding, r, &ctx->downstream_chain, ctx->downstream_eof, b,
-                activity);
-            if (rc != NGX_OK && rc != NGX_AGAIN && rc != NGX_DECLINED) {
-                return rc;
-            }
-
-            if (rc != NGX_DECLINED && b->pos == b->last) {
+    if (ctx->downstream_in != NULL && ctx->upstream_out == NULL) {
+        if (ctx->downstream_filter != NULL) {
+            rc = ctx->downstream_filter(ctx, activity);
+            if (rc == NGX_AGAIN) {
                 return NGX_OK;
             }
-        }
 
-        if (ctx->downstream_chain != NULL && b->pos == b->last) {
-            if (tunnel_utils_copy_chain_to_buffer(r, &ctx->downstream_chain, b,
-                                                  (size_t)-1)) {
-                *activity = 1;
+            if (rc == NGX_ERROR || rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+                return rc;
             }
         }
     }
 
-    if (!pc->write->ready || b->pos == b->last) {
+    cl = (ctx->upstream_out != NULL) ? ctx->upstream_out : ctx->downstream_in;
+    if (!pc->write->ready || cl == NULL) {
         return NGX_OK;
     }
 
+    b = cl->buf;
     size = b->last - b->pos;
     n = pc->send(pc, b->pos, size);
 
@@ -571,14 +562,26 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_DONE;
     }
 
+    if (r->upstream->peer.type == SOCK_DGRAM && n != (ssize_t)size) {
+        pc->write->error = 1;
+        return NGX_DONE;
+    }
+
     if (n > 0) {
         b->pos += n;
+        if (ctx->upstream_out != NULL) {
+            ctx->buffered = (ctx->buffered > (size_t)n)
+                                ? ctx->buffered - (size_t)n
+                                : 0;
+        }
         *activity = 1;
 
         if (b->pos == b->last) {
-            b->pos = b->start;
-            b->last = b->start;
-            tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+            if (ctx->upstream_out != NULL) {
+                tunnel_utils_free_consumed_chain(r, &ctx->upstream_out, NULL);
+            } else {
+                tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
+            }
         }
     }
 
@@ -588,62 +591,56 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 static ngx_int_t
 recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
-    ssize_t             n;
-    size_t              reserve, size;
-    ngx_buf_t          *b;
-    ngx_connection_t   *pc;
-    ngx_http_request_t *r;
-    ngx_int_t           rc;
+    ssize_t                     n;
+    size_t                      size;
+    ngx_buf_t                  *b;
+    ngx_chain_t                *cl;
+    ngx_connection_t           *pc;
+    ngx_http_request_t         *r;
+    ngx_http_tunnel_srv_conf_t *tscf;
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    b = ctx->client_buffer;
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
-    if (pc == NULL || !pc->read->ready || b->pos != b->last ||
+    if (pc == NULL || !pc->read->ready || ctx->upstream_in != NULL ||
+        ctx->downstream_out != NULL ||
         !downstream_output_idle(r, r->connection)) {
         return NGX_OK;
     }
 
-    b->pos = b->start;
-    b->last = b->start;
-
-    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-        reserve = NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE;
-
-        if ((size_t)(b->end - b->start) <=
-            reserve + NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-
-        b->last = b->start + reserve;
-        size = b->end - b->last - NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
-        size = ngx_min(size, (size_t)65535);
-    } else {
-        size = b->end - b->last;
+    if (ctx->buffered >= ctx->buffer_limit) {
+        return NGX_OK;
     }
 
+    size = ngx_min(tscf->buffer_size, ctx->buffer_limit - ctx->buffered);
+    if (tunnel_utils_alloc_chain_buf(r, &cl, size) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    b = cl->buf;
+
     if (size == 0) {
-        b->last = b->start;
         return NGX_OK;
     }
 
     n = pc->recv(pc, b->last, size);
 
     if (n == NGX_AGAIN) {
-        b->last = b->start;
         return NGX_OK;
     }
 
     if (n == 0) {
-        b->last = b->start;
+        if (r->upstream->peer.type == SOCK_DGRAM) {
+            return NGX_OK;
+        }
+
         pc->read->eof = 1;
         pc->read->ready = 0;
         return NGX_OK;
     }
 
     if (n < 0) {
-        b->last = b->start;
         pc->read->eof = 1;
         pc->read->error = 1;
         pc->read->ready = 0;
@@ -651,16 +648,8 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     b->last += n;
-
-    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-        rc = tunnel_padding_encode_downstream(ctx->padding, b, (size_t)n);
-        if (rc != NGX_OK) {
-            b->pos = b->start;
-            b->last = b->start;
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-    }
+    tunnel_utils_append_chain(&ctx->upstream_in, cl);
+    ctx->buffered += n;
 
     *activity = 1;
 
@@ -677,19 +666,38 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     ngx_chain_t        *before_out;
     ngx_uint_t          before_c_buffered;
     ngx_uint_t          before_r_buffered;
-    ngx_chain_t         out;
+    ngx_chain_t        *cl;
     ngx_connection_t   *c;
     ngx_http_request_t *r;
+    size_t              before_size, after_size, sent;
 
     r = ctx->request;
     c = r->connection;
-    b = ctx->client_buffer;
 
-    if (b->pos == b->last && downstream_output_idle(r, c)) {
+    tunnel_utils_free_consumed_chain(r, &ctx->upstream_in, NULL);
+    tunnel_utils_free_consumed_chain(r, &ctx->downstream_out, NULL);
+
+    if (ctx->upstream_in != NULL && ctx->downstream_out == NULL) {
+        if (ctx->upstream_filter != NULL) {
+            rc = ctx->upstream_filter(ctx, activity);
+            if (rc == NGX_AGAIN) {
+                return NGX_OK;
+            }
+
+            if (rc == NGX_ERROR || rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+                return rc;
+            }
+        }
+    }
+
+    cl = (ctx->downstream_out != NULL) ? ctx->downstream_out : ctx->upstream_in;
+    if (cl == NULL && downstream_output_idle(r, c)) {
         return NGX_OK;
     }
 
-    before_pos = b->pos;
+    b = cl == NULL ? NULL : cl->buf;
+    before_pos = b == NULL ? NULL : b->pos;
+    before_size = b == NULL ? 0 : ngx_buf_size(b);
     before_sent = c->sent;
     before_out = r->out;
     before_r_buffered = r->buffered;
@@ -698,25 +706,36 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     if (!downstream_output_idle(r, c)) {
         rc = ngx_http_output_filter(r, NULL);
     } else {
-        out.buf = b;
-        out.next = NULL;
-
-        b->flush = 1;
-        rc = ngx_http_output_filter(r, &out);
-        b->flush = 0;
+        for (; cl != NULL; cl = cl->next) {
+            cl->buf->flush = 1;
+        }
+        cl = (ctx->downstream_out != NULL) ? ctx->downstream_out
+                                           : ctx->upstream_in;
+        rc = ngx_http_output_filter(r, cl);
+        for (; cl != NULL; cl = cl->next) {
+            cl->buf->flush = 0;
+        }
     }
 
     if (rc == NGX_ERROR) {
         return NGX_DONE;
     }
 
-    if (b->pos == b->last && downstream_output_idle(r, c)) {
-        b->pos = b->start;
-        b->last = b->start;
+    if (b != NULL) {
+        after_size = ngx_buf_size(b);
+        if (before_size > after_size) {
+            sent = before_size - after_size;
+            ctx->buffered = (ctx->buffered > sent) ? ctx->buffered - sent : 0;
+        }
+    }
+
+    if (downstream_output_idle(r, c)) {
+        tunnel_utils_free_consumed_chain(r, &ctx->downstream_out, NULL);
+        tunnel_utils_free_consumed_chain(r, &ctx->upstream_in, NULL);
     }
 
     if (rc == NGX_OK || rc == NGX_AGAIN) {
-        if (c->sent != before_sent || b->pos != before_pos ||
+        if (c->sent != before_sent || (b != NULL && b->pos != before_pos) ||
             before_out != r->out || (before_r_buffered && !r->buffered) ||
             (before_c_buffered && !c->buffered)) {
             *activity = 1;
@@ -776,11 +795,11 @@ is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
 {
     ngx_uint_t download_drained;
 
-    *upload_drained = (ctx->downstream_chain == NULL &&
-                       ctx->upstream_buffer->pos == ctx->upstream_buffer->last);
+    *upload_drained = (ctx->downstream_in == NULL && ctx->upstream_out == NULL);
 
-    download_drained = (ctx->client_buffer->pos == ctx->client_buffer->last &&
-                        downstream_output_idle(r, c));
+    download_drained =
+        (ctx->upstream_in == NULL && ctx->downstream_out == NULL &&
+         downstream_output_idle(r, c));
 
     return (pc->read->eof && *upload_drained && download_drained);
 }

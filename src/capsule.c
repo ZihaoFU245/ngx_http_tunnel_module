@@ -172,28 +172,24 @@ tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule)
 }
 
 /*
- * Decode one CONNECT-UDP DATAGRAM capsule from src chain into dst.
- *
- * *src points to HTTP DATA bytes containing capsule frames.  dst->last points
- * to the write position for the decoded UDP payload.
- *
- * On NGX_OK, *src and its buffer cursors are advanced past the capsule and
- * dst->last is advanced past the copied UDP payload.  dst->pos is unchanged.
- * On NGX_AGAIN, NGX_DECLINED, or NGX_ERROR, src and dst cursors are unchanged.
+ * Decode one CONNECT-UDP DATAGRAM capsule from downstream_in into
+ * upstream_out.
  */
 ngx_int_t
-tunnel_capsule_decode_datagram(ngx_chain_t **src, ngx_buf_t *dst)
+tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
-    u_char      *p, context_first;
-    size_t       context_len, header_len, len_len, payload_len, type_len;
-    ngx_chain_t *cl, *commit;
-    uint64_t     type, capsule_len, context_id;
+    u_char             *p, context_first;
+    size_t              context_len, header_len, len_len, payload_len, type_len;
+    ngx_chain_t        *cl, *commit, *out;
+    ngx_http_request_t *r;
+    uint64_t            type, capsule_len, context_id;
 
-    if (src == NULL || dst == NULL) {
+    if (ctx == NULL) {
         return NGX_ERROR;
     }
 
-    cl = *src;
+    r = ctx->request;
+    cl = ctx->downstream_in;
     if (cl == NULL) {
         return NGX_AGAIN;
     }
@@ -213,92 +209,113 @@ tunnel_capsule_decode_datagram(ngx_chain_t **src, ngx_buf_t *dst)
     }
 
     if (type != CAPSULE_DATAGRAM) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP received non-DATAGRAM capsule");
+        return NGX_ERROR;
     }
 
     if (capsule_chain_peek(cl, p, &context_first) != NGX_OK) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP DATAGRAM capsule missing context id");
+        return NGX_ERROR;
     }
 
     context_len = (size_t)1 << (context_first >> 6);
     if (capsule_len < context_len) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP DATAGRAM capsule context id is truncated");
+        return NGX_ERROR;
     }
 
     if (capsule_chain_read_varint(&cl, &p, &context_id, &context_len) !=
         NGX_OK) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP DATAGRAM capsule context id is invalid");
+        return NGX_ERROR;
     }
 
     if (context_id != CAPSULE_DATAGRAM_CONTEXT_ID) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP DATAGRAM capsule context id is unsupported");
+        return NGX_ERROR;
     }
 
     if (capsule_len < context_len) {
-        return NGX_DECLINED;
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "CONNECT-UDP DATAGRAM capsule payload is truncated");
+        return NGX_ERROR;
     }
 
     payload_len = (size_t)(capsule_len - context_len);
     header_len = type_len + len_len + context_len;
 
-    if ((size_t)(dst->end - dst->last) < payload_len) {
-        return NGX_DECLINED;
+    if (ctx->buffered + payload_len > ctx->buffer_limit) {
+        return NGX_AGAIN;
     }
 
-    commit = *src;
+    if (tunnel_utils_alloc_chain_buf(r, &out, payload_len) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    commit = ctx->downstream_in;
     p = commit->buf->pos;
     capsule_chain_advance(&commit, &p, header_len);
-    capsule_chain_copy(&commit, &p, dst, payload_len);
-    *src = commit;
+    capsule_chain_copy(&commit, &p, out->buf, payload_len);
+    ctx->downstream_in = commit;
+    tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
+    tunnel_utils_append_chain(&ctx->upstream_out, out);
+    ctx->buffered += payload_len;
+    *activity = 1;
 
     return NGX_OK;
 }
 
 /*
- * Encode one CONNECT-UDP DATAGRAM capsule into dst.
- *
- * capsule must be a DATAGRAM capsule whose payload points to one UDP payload.
- * dst is the output buffer that will be sent to the downstream client.  The
- * payload may already live inside dst, as udp_recv_upstream() does after
- * receiving directly into ctx->client_buffer.
- *
- * On NGX_OK, dst->pos points at the encoded capsule and dst->last points after
- * it.  If payload and dst overlap, the payload is moved inside dst before the
- * capsule header is written.  On NGX_AGAIN or NGX_ERROR, dst cursors are not
- * advanced into a partially encoded capsule.
+ * Encode one UDP payload from upstream_in into a CONNECT-UDP DATAGRAM capsule
+ * in downstream_out.  One upstream_in chain link is one UDP datagram.
  */
 ngx_int_t
-tunnel_capsule_encode_datagram(tunnel_capsule_t *capsule, ngx_buf_t *dst)
+tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
-    u_char *p;
-    size_t  payload_len, context_len, capsule_len, header_len;
+    u_char             *p;
+    size_t              payload_len, context_len, capsule_len, header_len;
+    ngx_buf_t          *src, *dst;
+    ngx_chain_t        *in, *out;
+    ngx_http_request_t *r;
 
-    if (capsule == NULL || capsule->payload == NULL || dst == NULL) {
+    if (ctx == NULL) {
         return NGX_ERROR;
     }
 
-    if (capsule->type != CAPSULE_DATAGRAM) {
-        return NGX_ERROR;
+    in = ctx->upstream_in;
+    if (in == NULL) {
+        return NGX_AGAIN;
     }
 
-    payload_len = ngx_buf_size(capsule->payload);
+    r = ctx->request;
+    src = in->buf;
+    payload_len = ngx_buf_size(src);
     context_len = tunnel_capsule_varint_size(CAPSULE_DATAGRAM_CONTEXT_ID);
     capsule_len = context_len + payload_len;
     header_len = tunnel_capsule_varint_size(CAPSULE_DATAGRAM) +
                  tunnel_capsule_varint_size(capsule_len) + context_len;
 
     if (context_len == 0 || tunnel_capsule_varint_size(capsule_len) == 0 ||
-        capsule->len != capsule_len) {
+        payload_len == 0) {
         return NGX_ERROR;
     }
 
-    if ((size_t)(dst->end - dst->start) < header_len + payload_len) {
+    if (header_len + payload_len > ctx->buffer_limit) {
         return NGX_AGAIN;
     }
 
-    ngx_memmove(dst->start + header_len, capsule->payload->pos, payload_len);
+    if (tunnel_utils_alloc_chain_buf(r, &out, header_len + payload_len) !=
+        NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
-    p = dst->start;
+    dst = out->buf;
+    p = dst->last;
 
     if (capsule_encode_varint(&p, dst->end, CAPSULE_DATAGRAM) != NGX_OK ||
         capsule_encode_varint(&p, dst->end, capsule_len) != NGX_OK ||
@@ -307,8 +324,16 @@ tunnel_capsule_encode_datagram(tunnel_capsule_t *capsule, ngx_buf_t *dst)
         return NGX_ERROR;
     }
 
-    dst->pos = dst->start;
-    dst->last = dst->start + header_len + payload_len;
+    p = ngx_cpymem(p, src->pos, payload_len);
+    dst->last = p;
+    src->pos = src->last;
+    ctx->buffered = (ctx->buffered > payload_len)
+                        ? ctx->buffered - payload_len
+                        : 0;
+    tunnel_utils_free_consumed_chain(r, &ctx->upstream_in, NULL);
+    tunnel_utils_append_chain(&ctx->downstream_out, out);
+    ctx->buffered += header_len + payload_len;
+    *activity = 1;
 
     return NGX_OK;
 }

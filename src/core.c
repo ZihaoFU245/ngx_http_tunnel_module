@@ -165,7 +165,6 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 {
     ngx_int_t                   rc;
     ngx_int_t                   padding_needed;
-    size_t                      client_buffer_size;
     ngx_http_tunnel_ctx_t      *ctx;
     ngx_http_tunnel_srv_conf_t *tscf;
     ngx_http_upstream_t        *u;
@@ -198,20 +197,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 
     padding_needed = (r->connect_protocol.len == 0) ? tunnel_padding_needed(r)
                                                     : NGX_DECLINED;
-    client_buffer_size = (padding_needed == NGX_OK)
-                             ? tunnel_padding_buffer_size(r)
-                             : tscf->buffer_size;
-
-    ctx->client_buffer = ngx_create_temp_buf(r->pool, client_buffer_size);
-    if (ctx->client_buffer == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    ctx->upstream_buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
-    if (ctx->upstream_buffer == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
+    ctx->buffer_limit = tscf->buffer_size;
     /* Extended connect branching */
     rc = tunnel_extended_connect_branching(r, ctx);
     if (rc != NGX_DECLINED) {
@@ -219,6 +205,8 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     }
 
     if (padding_needed == NGX_OK) {
+        ctx->buffer_limit = tunnel_padding_buffer_size(r);
+
         ctx->padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
         if (ctx->padding == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -227,6 +215,9 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         if (tunnel_padding_negotiate(r, ctx->padding) != NGX_OK) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
+
+        ctx->downstream_filter = tunnel_padding_decode_downstream;
+        ctx->upstream_filter = tunnel_padding_encode_downstream;
     }
 
     ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);

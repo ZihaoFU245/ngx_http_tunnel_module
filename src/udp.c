@@ -72,6 +72,9 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 
     r->main->count++;
     ctx->content_handler_ref = 1;
+    ctx->buffer_limit = tscf->buffer_size + 10;
+    ctx->downstream_filter = tunnel_capsule_decode_datagram;
+    ctx->upstream_filter = tunnel_capsule_encode_datagram;
 
     ngx_http_upstream_init(r);
 
@@ -111,7 +114,7 @@ tunnel_udp_process_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
-    rc = tunnel_udp_relay_start(ctx);
+    rc = tunnel_relay_start(ctx);
     if (rc != NGX_OK) {
         tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
                                        ? rc

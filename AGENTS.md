@@ -1,7 +1,7 @@
 # Code Style and Format
 
-Code style follows nginx style. There is a `.clang-format`
-file, it is recommended to use clang-format.
+Code style follows nginx style. You MUST never call
+clang-format.
 
 # Refactor Guide
 

@@ -55,24 +55,29 @@ typedef struct {
 } ngx_http_tunnel_srv_conf_t;
 
 typedef struct {
-    u_char                              padding_header[3];
     ngx_str_t                           response_value;
-    size_t                              payload_size;
-    size_t                              padding_size;
     uint64_t                            previous_header_hash;
     ngx_uint_t                          downstream_count;
     ngx_uint_t                          upstream_count;
-    unsigned                            read_state : 2;
-    unsigned                            padding_header_size : 2;
 } tunnel_padding_ctx_t;
 
-typedef struct {
+typedef struct ngx_http_tunnel_ctx_s ngx_http_tunnel_ctx_t;
+
+typedef ngx_int_t (*tunnel_relay_filter_pt)(ngx_http_tunnel_ctx_t *ctx,
+                                            ngx_uint_t            *activity);
+
+struct ngx_http_tunnel_ctx_s {
     ngx_http_request_t                  *request;
-    ngx_buf_t                           *client_buffer;
-    ngx_buf_t                           *upstream_buffer;
-    ngx_chain_t                         *downstream_chain;
+    ngx_chain_t                         *downstream_in;
+    ngx_chain_t                         *downstream_out;
+    ngx_chain_t                         *upstream_in;
+    ngx_chain_t                         *upstream_out;
+    size_t                              buffered;
+    size_t                              buffer_limit;
     ngx_http_upstream_resolved_t        *resolved;
     tunnel_padding_ctx_t                *padding;
+    tunnel_relay_filter_pt              downstream_filter;
+    tunnel_relay_filter_pt              upstream_filter;
     unsigned                            finalized : 1;
     unsigned                            connected : 1;
     unsigned                            cleanup_added : 1;
@@ -80,7 +85,7 @@ typedef struct {
     unsigned                            downstream_eof : 1;
     unsigned                            upstream_write_closed : 1;
     unsigned                            read_again_event_posted : 1;
-} ngx_http_tunnel_ctx_t;
+};
 
 extern ngx_module_t ngx_http_tunnel_connect_module;
 
@@ -123,15 +128,15 @@ ngx_int_t tunnel_udp_set_target(ngx_http_request_t    *r,
 ngx_int_t tunnel_udp_init_upstream(ngx_http_request_t    *r,
                                    ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
-ngx_int_t tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx);
 
 ngx_int_t tunnel_capsule_is_header_present(ngx_http_request_t *r);
 size_t    tunnel_capsule_varint_size(uint64_t value);
 ngx_int_t tunnel_capsule_decode(ngx_buf_t *src, tunnel_capsule_t *capsule);
 ngx_int_t tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule);
-ngx_int_t tunnel_capsule_decode_datagram(ngx_chain_t **src, ngx_buf_t *dst);
-ngx_int_t tunnel_capsule_encode_datagram(tunnel_capsule_t *capsule,
-                                         ngx_buf_t        *dst);
+ngx_int_t tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx,
+                                         ngx_uint_t            *activity);
+ngx_int_t tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx,
+                                         ngx_uint_t            *activity);
 
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r,
@@ -161,15 +166,10 @@ tunnel_padding_active(tunnel_padding_ctx_t *padding)
 }
 
 void      tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_padding_decode_downstream(tunnel_padding_ctx_t *padding,
-                                           ngx_http_request_t   *r,
-                                           ngx_chain_t         **chain,
-                                           ngx_uint_t            eof,
-                                           ngx_buf_t            *dst,
-                                           ngx_uint_t           *activity);
-ngx_int_t tunnel_padding_encode_downstream(tunnel_padding_ctx_t *padding,
-                                           ngx_buf_t            *dst,
-                                           size_t                 payload_size);
+ngx_int_t tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                           ngx_uint_t            *activity);
+ngx_int_t tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                           ngx_uint_t            *activity);
 
 void tunnel_relay_downstream_read_handler(ngx_http_request_t *r);
 void tunnel_relay_downstream_write_handler(ngx_http_request_t *r);
@@ -184,9 +184,13 @@ void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
                                       ngx_chain_t **chain, ngx_chain_t *limit);
-ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
-                                             ngx_chain_t **chain, ngx_buf_t *b,
-                                             size_t limit);
+void tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in);
+ngx_int_t tunnel_utils_alloc_chain_buf(ngx_http_request_t *r, ngx_chain_t **cl,
+                                       size_t size);
+ngx_int_t tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len);
+ngx_int_t tunnel_utils_chain_read(ngx_chain_t **chain, u_char **pos,
+                                  u_char *dst, size_t len);
+void tunnel_utils_chain_advance(ngx_chain_t **chain, u_char **pos, size_t len);
 ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
 ngx_int_t                  tunnel_utils_init_extended_connect(ngx_conf_t *cf);
 ngx_int_t
