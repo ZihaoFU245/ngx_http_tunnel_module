@@ -179,6 +179,7 @@ ngx_int_t
 tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     u_char             *p, context_first;
+    ngx_int_t           rc;
     size_t              context_len, header_len, len_len, payload_len, type_len;
     ngx_chain_t        *cl, *commit, *out;
     ngx_http_request_t *r;
@@ -210,7 +211,7 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (type != CAPSULE_DATAGRAM) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP received non-DATAGRAM capsule");
+                      "Received non-DATAGRAM capsule");
         return NGX_ERROR;
     }
 
@@ -249,11 +250,12 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     payload_len = (size_t)(capsule_len - context_len);
     header_len = type_len + len_len + context_len;
 
-    if (ctx->buffered + payload_len > ctx->buffer_limit) {
+    rc = tunnel_utils_alloc_chain_buf(ctx, &out, payload_len);
+    if (rc == NGX_AGAIN) {
         return NGX_AGAIN;
     }
 
-    if (tunnel_utils_alloc_chain_buf(r, &out, payload_len) != NGX_OK) {
+    if (rc != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -262,9 +264,8 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     capsule_chain_advance(&commit, &p, header_len);
     capsule_chain_copy(&commit, &p, out->buf, payload_len);
     ctx->downstream_in = commit;
-    tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
+    tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_in, NULL);
     tunnel_utils_append_chain(&ctx->upstream_out, out);
-    ctx->buffered += payload_len;
     *activity = 1;
 
     return NGX_OK;
@@ -278,10 +279,10 @@ ngx_int_t
 tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     u_char             *p;
+    ngx_int_t           rc;
     size_t              payload_len, context_len, capsule_len, header_len;
     ngx_buf_t          *src, *dst;
     ngx_chain_t        *in, *out;
-    ngx_http_request_t *r;
 
     if (ctx == NULL) {
         return NGX_ERROR;
@@ -292,7 +293,6 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_AGAIN;
     }
 
-    r = ctx->request;
     src = in->buf;
     payload_len = ngx_buf_size(src);
     context_len = tunnel_capsule_varint_size(CAPSULE_DATAGRAM_CONTEXT_ID);
@@ -305,12 +305,12 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_ERROR;
     }
 
-    if (header_len + payload_len > ctx->buffer_limit) {
+    rc = tunnel_utils_alloc_chain_buf(ctx, &out, header_len + payload_len);
+    if (rc == NGX_AGAIN) {
         return NGX_AGAIN;
     }
 
-    if (tunnel_utils_alloc_chain_buf(r, &out, header_len + payload_len) !=
-        NGX_OK) {
+    if (rc != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -327,12 +327,8 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     p = ngx_cpymem(p, src->pos, payload_len);
     dst->last = p;
     src->pos = src->last;
-    ctx->buffered = (ctx->buffered > payload_len)
-                        ? ctx->buffered - payload_len
-                        : 0;
-    tunnel_utils_free_consumed_chain(r, &ctx->upstream_in, NULL);
+    tunnel_utils_free_consumed_chain(ctx, &ctx->upstream_in, NULL);
     tunnel_utils_append_chain(&ctx->downstream_out, out);
-    ctx->buffered += header_len + payload_len;
     *activity = 1;
 
     return NGX_OK;

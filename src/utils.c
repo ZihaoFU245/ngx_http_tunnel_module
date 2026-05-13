@@ -179,15 +179,27 @@ tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout)
 }
 
 void
-tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
-                                 ngx_chain_t *limit)
+tunnel_utils_free_consumed_chain(ngx_http_tunnel_ctx_t *ctx,
+                                 ngx_chain_t **chain, ngx_chain_t *limit)
 {
-    ngx_chain_t *cl;
+    ngx_buf_t          *b;
+    ngx_chain_t        *cl;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
 
     while (*chain != limit && *chain != NULL &&
            ngx_buf_size((*chain)->buf) == 0) {
         cl = *chain;
+        b = cl->buf;
         *chain = cl->next;
+
+        if (b->tag == (ngx_buf_tag_t)&ngx_http_tunnel_module) {
+            ctx->buffered = (ctx->buffered > (size_t)(b->end - b->start))
+                                ? ctx->buffered - (size_t)(b->end - b->start)
+                                : 0;
+        }
+
         ngx_free_chain(r->pool, cl);
     }
 }
@@ -210,10 +222,17 @@ tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in)
 }
 
 ngx_int_t
-tunnel_utils_alloc_chain_buf(ngx_http_request_t *r, ngx_chain_t **cl,
+tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx, ngx_chain_t **cl,
                              size_t size)
 {
-    ngx_buf_t *b;
+    ngx_buf_t          *b;
+    ngx_http_request_t *r;
+
+    if (ctx->buffered + size > ctx->buffer_limit || size == 0) {
+        return NGX_AGAIN;
+    }
+
+    r = ctx->request;
 
     *cl = ngx_alloc_chain_link(r->pool);
     if (*cl == NULL) {
@@ -222,11 +241,14 @@ tunnel_utils_alloc_chain_buf(ngx_http_request_t *r, ngx_chain_t **cl,
 
     b = ngx_create_temp_buf(r->pool, size);
     if (b == NULL) {
+        ngx_free_chain(r->pool, *cl);
         return NGX_ERROR;
     }
 
+    b->tag = (ngx_buf_tag_t)&ngx_http_tunnel_module;
     (*cl)->buf = b;
     (*cl)->next = NULL;
+    ctx->buffered += size;
 
     return NGX_OK;
 }
