@@ -57,10 +57,8 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
     ngx_http_tunnel_srv_conf_t *tscf;
 
     /*
-     * TODO: watch nginx core upstream.
-     * `connect_protocol` is the pseudo header
-     * for `:protocol`, this requires a patch to
-     * nginx core.
+     * `connect_protocol` is the patched nginx core field for the :protocol
+     * pseudo header.
      */
     if (r->connect_protocol.len == 0) {
         return NGX_DECLINED;

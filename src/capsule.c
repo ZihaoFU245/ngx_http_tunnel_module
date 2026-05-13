@@ -250,6 +250,16 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     payload_len = (size_t)(capsule_len - context_len);
     header_len = type_len + len_len + context_len;
 
+    if (payload_len == 0) {
+        commit = ctx->downstream_in;
+        p = commit->buf->pos;
+        capsule_chain_advance(&commit, &p, header_len);
+        ctx->downstream_in = commit;
+        tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_in, NULL);
+        *activity = 1;
+        return NGX_OK;
+    }
+
     rc = tunnel_utils_alloc_chain_buf(ctx, &out, payload_len);
     if (rc == NGX_AGAIN) {
         return NGX_AGAIN;
@@ -321,6 +331,7 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         capsule_encode_varint(&p, dst->end, capsule_len) != NGX_OK ||
         capsule_encode_varint(&p, dst->end, CAPSULE_DATAGRAM_CONTEXT_ID) !=
             NGX_OK) {
+        tunnel_utils_free_consumed_chain(ctx, &out, NULL);
         return NGX_ERROR;
     }
 

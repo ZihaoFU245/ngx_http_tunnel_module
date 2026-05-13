@@ -175,6 +175,7 @@ tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
             if (tunnel_utils_chain_read(&ctx->downstream_in, &pos,
                                         out->buf->last,
                                         payload_size) != NGX_OK) {
+                tunnel_utils_free_consumed_chain(ctx, &out, NULL);
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
             }
 
@@ -260,6 +261,8 @@ tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
     pos = ctx->upstream_in->buf->pos;
     if (tunnel_utils_chain_read(&ctx->upstream_in, &pos, b->last,
                                 payload_size) != NGX_OK) {
+        out->buf->last = out->buf->pos;
+        tunnel_utils_free_consumed_chain(ctx, &out, NULL);
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -477,6 +480,7 @@ tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
 
     b = ngx_create_temp_buf(r->pool, total_size);
     if (b == NULL) {
+        ngx_free_chain(r->pool, cl);
         return;
     }
 

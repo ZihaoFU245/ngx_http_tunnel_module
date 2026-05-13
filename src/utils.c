@@ -228,7 +228,8 @@ tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx, ngx_chain_t **cl,
     ngx_buf_t          *b;
     ngx_http_request_t *r;
 
-    if (ctx->buffered + size > ctx->buffer_limit || size == 0) {
+    if (size == 0 || ctx->buffered >= ctx->buffer_limit ||
+        size > ctx->buffer_limit - ctx->buffered) {
         return NGX_AGAIN;
     }
 
