@@ -197,7 +197,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 
     padding_needed = (r->connect_protocol.len == 0) ? tunnel_padding_needed(r)
                                                     : NGX_DECLINED;
-    ctx->buffer_limit = tscf->buffer_size;
+    ctx->buffer_limit = 2 * tscf->buffer_size;
     /* Extended connect branching */
     rc = tunnel_extended_connect_branching(r, ctx);
     if (rc != NGX_DECLINED) {
@@ -205,8 +205,6 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     }
 
     if (padding_needed == NGX_OK) {
-        ctx->buffer_limit = tscf->buffer_size + tunnel_padding_buffer_size(r);
-
         ctx->padding = ngx_pcalloc(r->pool, sizeof(tunnel_padding_ctx_t));
         if (ctx->padding == NULL) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;

@@ -16,8 +16,6 @@ static ngx_int_t capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos,
                                            uint64_t *value, size_t *encoded);
 static ngx_int_t capsule_chain_peek(ngx_chain_t *chain, u_char *pos,
                                     u_char *value);
-static ngx_int_t capsule_chain_have(ngx_chain_t *chain, u_char *pos,
-                                    uint64_t len);
 static void capsule_chain_advance(ngx_chain_t **chain, u_char **pos, size_t n);
 static void capsule_chain_copy(ngx_chain_t **chain, u_char **pos,
                                ngx_buf_t *dst, size_t n);
@@ -266,7 +264,7 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     payload_len = (size_t)(capsule_len - context_len);
     header_len = type_len + len_len + context_len;
 
-    if (capsule_chain_have(cl, p, payload_len) != NGX_OK) {
+    if (!tunnel_utils_chain_have(cl, p, payload_len)) {
         if (ctx->downstream_eof) {
             ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                           "DATAGRAM capsule payload is incomplete");
@@ -286,19 +284,45 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_OK;
     }
 
-    rc = tunnel_utils_alloc_chain_buf(ctx, &out, payload_len);
-    if (rc == NGX_AGAIN) {
-        return NGX_AGAIN;
+    if ((size_t)(cl->buf->last - p) >= payload_len) {
+        out = ngx_alloc_chain_link(r->pool);
+        if (out == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        out->buf = ngx_calloc_buf(r->pool);
+        if (out->buf == NULL) {
+            ngx_free_chain(r->pool, out);
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        out->buf->pos = p;
+        out->buf->last = p + payload_len;
+        out->buf->start = p;
+        out->buf->end = p + payload_len;
+        out->buf->memory = 1;
+        out->next = NULL;
+
+        commit = ctx->downstream_in;
+        p = commit->buf->pos;
+        capsule_chain_advance(&commit, &p, header_len + payload_len);
+
+    } else {
+        rc = tunnel_utils_alloc_chain_buf(ctx, &out, payload_len);
+        if (rc == NGX_AGAIN) {
+            return NGX_AGAIN;
+        }
+
+        if (rc != NGX_OK) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        commit = ctx->downstream_in;
+        p = commit->buf->pos;
+        capsule_chain_advance(&commit, &p, header_len);
+        capsule_chain_copy(&commit, &p, out->buf, payload_len);
     }
 
-    if (rc != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    commit = ctx->downstream_in;
-    p = commit->buf->pos;
-    capsule_chain_advance(&commit, &p, header_len);
-    capsule_chain_copy(&commit, &p, out->buf, payload_len);
     ctx->downstream_in = commit;
     tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_in, NULL);
     tunnel_utils_append_chain(&ctx->upstream_out, out);
@@ -318,7 +342,7 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     ngx_int_t           rc;
     size_t              payload_len, context_len, capsule_len, header_len;
     ngx_buf_t          *src, *dst;
-    ngx_chain_t        *in, *out;
+    ngx_chain_t        *head, *in, **ll;
 
     if (ctx == NULL) {
         return NGX_ERROR;
@@ -336,12 +360,11 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     header_len = tunnel_capsule_varint_size(CAPSULE_DATAGRAM) +
                  tunnel_capsule_varint_size(capsule_len) + context_len;
 
-    if (context_len == 0 || tunnel_capsule_varint_size(capsule_len) == 0 ||
-        payload_len == 0) {
+    if (context_len == 0 || tunnel_capsule_varint_size(capsule_len) == 0) {
         return NGX_ERROR;
     }
 
-    rc = tunnel_utils_alloc_chain_buf(ctx, &out, header_len + payload_len);
+    rc = tunnel_utils_alloc_chain_buf(ctx, &head, header_len);
     if (rc == NGX_AGAIN) {
         return NGX_AGAIN;
     }
@@ -350,22 +373,29 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    dst = out->buf;
+    dst = head->buf;
     p = dst->last;
 
     if (capsule_encode_varint(&p, dst->end, CAPSULE_DATAGRAM) != NGX_OK ||
         capsule_encode_varint(&p, dst->end, capsule_len) != NGX_OK ||
         capsule_encode_varint(&p, dst->end, CAPSULE_DATAGRAM_CONTEXT_ID) !=
             NGX_OK) {
-        tunnel_utils_free_consumed_chain(ctx, &out, NULL);
+        head->buf->pos = head->buf->last;
+        tunnel_utils_free_consumed_chain(ctx, &head, NULL);
         return NGX_ERROR;
     }
 
-    p = ngx_cpymem(p, src->pos, payload_len);
     dst->last = p;
-    src->pos = src->last;
-    tunnel_utils_free_consumed_chain(ctx, &ctx->upstream_in, NULL);
-    tunnel_utils_append_chain(&ctx->downstream_out, out);
+    ctx->upstream_in = in->next;
+    in->next = NULL;
+
+    ll = &ctx->downstream_out;
+    while (*ll != NULL) {
+        ll = &(*ll)->next;
+    }
+
+    *ll = head;
+    head->next = in;
     *activity = 1;
 
     return NGX_OK;
@@ -530,35 +560,6 @@ capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos, uint64_t *value,
 
     if (encoded != NULL) {
         *encoded = len;
-    }
-
-    return NGX_OK;
-}
-
-static ngx_int_t
-capsule_chain_have(ngx_chain_t *chain, u_char *pos, uint64_t len)
-{
-    size_t n;
-
-    while (len != 0) {
-        if (chain == NULL) {
-            return NGX_AGAIN;
-        }
-
-        if (pos == NULL || pos == chain->buf->last) {
-            chain = chain->next;
-            pos = chain == NULL ? NULL : chain->buf->pos;
-            continue;
-        }
-
-        n = chain->buf->last - pos;
-        if ((uint64_t)n >= len) {
-            return NGX_OK;
-        }
-
-        len -= n;
-        chain = chain->next;
-        pos = chain == NULL ? NULL : chain->buf->pos;
     }
 
     return NGX_OK;

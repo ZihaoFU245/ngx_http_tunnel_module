@@ -72,7 +72,7 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 
     r->main->count++;
     ctx->content_handler_ref = 1;
-    ctx->buffer_limit = 2 * tscf->buffer_size + 10;
+    ctx->buffer_limit = 2 * tscf->buffer_size;
     ctx->downstream_filter = tunnel_capsule_decode_datagram;
     ctx->upstream_filter = tunnel_capsule_encode_datagram;
 

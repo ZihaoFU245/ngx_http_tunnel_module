@@ -22,8 +22,10 @@ static ngx_int_t padding_generate_response_value(ngx_http_request_t   *r,
                                                  tunnel_padding_ctx_t *padding,
                                                  ngx_str_t            *value);
 static void      padding_fill_response_value(u_char *data, size_t len);
-static ngx_int_t padding_chain_copy(ngx_chain_t *chain, u_char *pos,
-                                    u_char *dst, size_t len);
+static ngx_inline u_char padding_chain_read_byte(ngx_chain_t **chain,
+                                                 u_char      **pos);
+static ngx_inline void padding_chain_advance(ngx_chain_t **chain, u_char **pos,
+                                             size_t n);
 static ngx_int_t
 padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
                                    ngx_http_v2_out_frame_t  *frame);
@@ -40,18 +42,6 @@ tunnel_padding_needed(ngx_http_request_t *r)
     }
 
     return NGX_OK;
-}
-
-size_t
-tunnel_padding_buffer_size(ngx_http_request_t *r)
-{
-    ngx_http_tunnel_srv_conf_t *tscf;
-
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
-
-    return ngx_min(tscf->buffer_size, (size_t)65535) +
-           NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE +
-           NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
 }
 
 ngx_int_t
@@ -104,11 +94,10 @@ ngx_int_t
 tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
                                  ngx_uint_t            *activity)
 {
-    u_char                header[NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE];
-    u_char               *pos;
-    ngx_int_t             rc;
-    size_t                frame_size, payload_size, padding_size;
-    ngx_chain_t          *cl, *out;
+    u_char               *p, *pos;
+    size_t                frame_size, n, payload_size, padding_size;
+    ngx_buf_t            *b;
+    ngx_chain_t          *cl, *out, **ll;
     ngx_http_request_t   *r;
     tunnel_padding_ctx_t *padding;
 
@@ -131,8 +120,8 @@ tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
         }
 
         pos = cl->buf->pos;
-        if (tunnel_utils_chain_have(
-                cl, pos, NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE) != NGX_OK) {
+        if (!tunnel_utils_chain_have(
+                cl, pos, NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE)) {
             if (ctx->downstream_eof) {
                 ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                               "padding request ended with incomplete frame");
@@ -142,15 +131,27 @@ tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
             return NGX_AGAIN;
         }
 
-        if (padding_chain_copy(cl, pos, header, sizeof(header)) != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        /*
+         * Parse with local cursors only.  The real buffer positions are left
+         * unchanged until the full padding frame is available.
+         */
+        p = pos;
+        payload_size = (size_t)padding_chain_read_byte(&cl, &p) << 8;
+        payload_size |= padding_chain_read_byte(&cl, &p);
+        padding_size = padding_chain_read_byte(&cl, &p);
+
+        if (payload_size == 0) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "padding request has empty payload");
+            return NGX_HTTP_BAD_REQUEST;
         }
 
-        payload_size = ((size_t)header[0] << 8) | header[1];
-        padding_size = header[2];
-        frame_size = sizeof(header) + payload_size + padding_size;
+        cl = ctx->downstream_in;
+        pos = cl->buf->pos;
+        frame_size =
+            NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE + payload_size + padding_size;
 
-        if (tunnel_utils_chain_have(cl, pos, frame_size) != NGX_OK) {
+        if (!tunnel_utils_chain_have(cl, pos, frame_size)) {
             if (ctx->downstream_eof) {
                 ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                               "padding request ended with incomplete frame");
@@ -160,30 +161,53 @@ tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
             return NGX_AGAIN;
         }
 
-        tunnel_utils_chain_advance(&ctx->downstream_in, &pos, sizeof(header));
+        padding_chain_advance(&cl, &pos, NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE);
+        ctx->downstream_in = cl;
 
-        if (payload_size != 0) {
-            rc = tunnel_utils_alloc_chain_buf(ctx, &out, payload_size);
-            if (rc == NGX_AGAIN) {
-                return NGX_AGAIN;
-            }
-
-            if (rc != NGX_OK) {
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            if (tunnel_utils_chain_read(&ctx->downstream_in, &pos,
-                                        out->buf->last,
-                                        payload_size) != NGX_OK) {
-                tunnel_utils_free_consumed_chain(ctx, &out, NULL);
-                return NGX_HTTP_INTERNAL_SERVER_ERROR;
-            }
-
-            out->buf->last += payload_size;
-            tunnel_utils_append_chain(&ctx->upstream_out, out);
+        ll = &ctx->upstream_out;
+        while (*ll != NULL) {
+            ll = &(*ll)->next;
         }
 
-        tunnel_utils_chain_advance(&ctx->downstream_in, &pos, padding_size);
+        while (payload_size != 0) {
+            if (pos == cl->buf->last) {
+                cl = cl->next;
+                pos = cl->buf->pos;
+                continue;
+            }
+
+            n = ngx_min(payload_size, (size_t)(cl->buf->last - pos));
+
+            out = ngx_alloc_chain_link(r->pool);
+            if (out == NULL) {
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+
+            b = ngx_calloc_buf(r->pool);
+            if (b == NULL) {
+                ngx_free_chain(r->pool, out);
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+
+            b->pos = pos;
+            b->last = pos + n;
+            b->start = pos;
+            b->end = pos + n;
+            b->memory = 1;
+
+            out->buf = b;
+            out->next = NULL;
+            *ll = out;
+            ll = &out->next;
+
+            pos += n;
+            cl->buf->pos = pos;
+            payload_size -= n;
+        }
+
+        ctx->downstream_in = cl;
+        padding_chain_advance(&cl, &pos, padding_size);
+        ctx->downstream_in = cl;
         tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_in, NULL);
         padding->downstream_count++;
         *activity = 1;
@@ -202,9 +226,9 @@ tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
 {
     u_char               *p, *pos;
     ngx_int_t             rc;
-    size_t                payload_size, padding_size;
+    size_t                payload_size, padding_size, source_size;
     ngx_buf_t            *b;
-    ngx_chain_t          *out;
+    ngx_chain_t          *head, *in, *payload, *pad, **ll;
     tunnel_padding_ctx_t *padding;
 
     padding = ctx->padding;
@@ -220,12 +244,10 @@ tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
         return NGX_AGAIN;
     }
 
-    payload_size =
-        ngx_min((size_t)ngx_buf_size(ctx->upstream_in->buf),
-                (size_t)(65535 - NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE));
-    if (payload_size == 0 || payload_size > 65535) {
-        return NGX_ERROR;
-    }
+    in = ctx->upstream_in;
+    source_size = (size_t)ngx_buf_size(in->buf);
+    payload_size = ngx_min(
+        source_size, (size_t)(65535 - NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE));
 
     if (payload_size < 100) {
         padding_size = NGX_HTTP_TUNNEL_MAX_PADDING_SIZE - payload_size +
@@ -240,9 +262,8 @@ tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
             65535 - NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE - payload_size;
     }
 
-    rc = tunnel_utils_alloc_chain_buf(ctx, &out,
-                                      NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE +
-                                          payload_size + padding_size);
+    rc = tunnel_utils_alloc_chain_buf(ctx, &head,
+                                      NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE);
     if (rc == NGX_AGAIN) {
         return NGX_AGAIN;
     }
@@ -251,30 +272,83 @@ tunnel_padding_encode_downstream(ngx_http_tunnel_ctx_t *ctx,
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    b = out->buf;
+    pad = NULL;
+    if (padding_size != 0) {
+        rc = tunnel_utils_alloc_chain_buf(ctx, &pad, padding_size);
+        if (rc == NGX_AGAIN) {
+            head->buf->pos = head->buf->last;
+            tunnel_utils_free_consumed_chain(ctx, &head, NULL);
+            return NGX_AGAIN;
+        }
+
+        if (rc != NGX_OK) {
+            head->buf->pos = head->buf->last;
+            tunnel_utils_free_consumed_chain(ctx, &head, NULL);
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        ngx_memzero(pad->buf->last, padding_size);
+        pad->buf->last += padding_size;
+    }
+
+    pos = in->buf->pos;
+    if (payload_size == source_size) {
+        payload = in;
+        ctx->upstream_in = in->next;
+        payload->next = NULL;
+
+    } else {
+        payload = ngx_alloc_chain_link(ctx->request->pool);
+        if (payload == NULL) {
+            head->buf->pos = head->buf->last;
+            tunnel_utils_free_consumed_chain(ctx, &head, NULL);
+            if (pad != NULL) {
+                pad->buf->pos = pad->buf->last;
+                tunnel_utils_free_consumed_chain(ctx, &pad, NULL);
+            }
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        b = ngx_calloc_buf(ctx->request->pool);
+        if (b == NULL) {
+            ngx_free_chain(ctx->request->pool, payload);
+            head->buf->pos = head->buf->last;
+            tunnel_utils_free_consumed_chain(ctx, &head, NULL);
+            if (pad != NULL) {
+                pad->buf->pos = pad->buf->last;
+                tunnel_utils_free_consumed_chain(ctx, &pad, NULL);
+            }
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        b->pos = pos;
+        b->last = pos + payload_size;
+        b->start = pos;
+        b->end = pos + payload_size;
+        b->memory = 1;
+
+        payload->buf = b;
+        payload->next = NULL;
+        in->buf->pos = pos + payload_size;
+    }
+
+    b = head->buf;
     p = b->last;
     *p++ = (u_char)(payload_size >> 8);
     *p++ = (u_char)payload_size;
     *p++ = (u_char)padding_size;
     b->last = p;
 
-    pos = ctx->upstream_in->buf->pos;
-    if (tunnel_utils_chain_read(&ctx->upstream_in, &pos, b->last,
-                                payload_size) != NGX_OK) {
-        out->buf->last = out->buf->pos;
-        tunnel_utils_free_consumed_chain(ctx, &out, NULL);
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    b->last += payload_size;
-    if (padding_size) {
-        ngx_memzero(b->last, padding_size);
-        b->last += padding_size;
-    }
-
     padding->upstream_count++;
-    tunnel_utils_free_consumed_chain(ctx, &ctx->upstream_in, NULL);
-    tunnel_utils_append_chain(&ctx->downstream_out, out);
+
+    ll = &ctx->downstream_out;
+    while (*ll != NULL) {
+        ll = &(*ll)->next;
+    }
+
+    *ll = head;
+    head->next = payload;
+    payload->next = pad;
     *activity = 1;
 
     return NGX_OK;
@@ -396,31 +470,6 @@ padding_fill_response_value(u_char *data, size_t len)
     for (i = first; i < len; i++) {
         data[i] = codes[16];
     }
-}
-
-static ngx_int_t
-padding_chain_copy(ngx_chain_t *chain, u_char *pos, u_char *dst, size_t len)
-{
-    size_t n;
-
-    while (len != 0) {
-        if (chain == NULL) {
-            return NGX_AGAIN;
-        }
-
-        if (pos == NULL || pos == chain->buf->last) {
-            chain = chain->next;
-            pos = chain == NULL ? NULL : chain->buf->pos;
-            continue;
-        }
-
-        n = ngx_min(len, (size_t)(chain->buf->last - pos));
-        dst = ngx_cpymem(dst, pos, n);
-        pos += n;
-        len -= n;
-    }
-
-    return NGX_OK;
 }
 
 void
@@ -579,4 +628,51 @@ padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
     }
 
     return NGX_OK;
+}
+
+static ngx_inline u_char
+padding_chain_read_byte(ngx_chain_t **chain, u_char **pos)
+{
+    u_char      *p;
+    ngx_chain_t *cl;
+
+    cl = *chain;
+    p = *pos;
+
+    if (p == cl->buf->last) {
+        cl = cl->next;
+        p = cl->buf->pos;
+    }
+
+    *chain = cl;
+    *pos = p + 1;
+
+    return *p;
+}
+
+static ngx_inline void
+padding_chain_advance(ngx_chain_t **chain, u_char **pos, size_t len)
+{
+    u_char      *p;
+    size_t       n;
+    ngx_chain_t *cl;
+
+    cl = *chain;
+    p = *pos;
+
+    while (len != 0) {
+        if (p == cl->buf->last) {
+            cl = cl->next;
+            p = cl->buf->pos;
+            continue;
+        }
+
+        n = ngx_min(len, (size_t)(cl->buf->last - p));
+        p += n;
+        cl->buf->pos = p;
+        len -= n;
+    }
+
+    *chain = cl;
+    *pos = p;
 }

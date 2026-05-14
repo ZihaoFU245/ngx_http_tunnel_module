@@ -153,7 +153,6 @@ tunnel_relay_is_stream_downstream(ngx_http_request_t *r)
 ngx_int_t tunnel_relay_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 
 ngx_int_t tunnel_padding_needed(ngx_http_request_t *r);
-size_t    tunnel_padding_buffer_size(ngx_http_request_t *r);
 ngx_int_t tunnel_padding_negotiate(ngx_http_request_t   *r,
                                    tunnel_padding_ctx_t *padding);
 ngx_int_t tunnel_padding_add_response_header(ngx_http_request_t   *r,
@@ -187,10 +186,7 @@ void tunnel_utils_free_consumed_chain(ngx_http_tunnel_ctx_t *ctx,
 void tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in);
 ngx_int_t tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx,
                                        ngx_chain_t **cl, size_t size);
-ngx_int_t tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len);
-ngx_int_t tunnel_utils_chain_read(ngx_chain_t **chain, u_char **pos,
-                                  u_char *dst, size_t len);
-void tunnel_utils_chain_advance(ngx_chain_t **chain, u_char **pos, size_t len);
+ngx_uint_t tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len);
 ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
 ngx_int_t                  tunnel_utils_init_extended_connect(ngx_conf_t *cf);
 ngx_int_t

@@ -254,14 +254,14 @@ tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx, ngx_chain_t **cl,
     return NGX_OK;
 }
 
-ngx_int_t
+ngx_inline ngx_uint_t
 tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len)
 {
     size_t n;
 
     while (len != 0) {
         if (chain == NULL) {
-            return NGX_AGAIN;
+            return 0;
         }
 
         if (pos == NULL || pos == chain->buf->last) {
@@ -272,7 +272,7 @@ tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len)
 
         n = chain->buf->last - pos;
         if (n >= len) {
-            return NGX_OK;
+            return 1;
         }
 
         len -= n;
@@ -280,67 +280,5 @@ tunnel_utils_chain_have(ngx_chain_t *chain, u_char *pos, size_t len)
         pos = chain == NULL ? NULL : chain->buf->pos;
     }
 
-    return NGX_OK;
-}
-
-ngx_int_t
-tunnel_utils_chain_read(ngx_chain_t **chain, u_char **pos, u_char *dst,
-                        size_t len)
-{
-    size_t       n;
-    ngx_chain_t *cl;
-    u_char      *p;
-
-    cl = *chain;
-    p = *pos;
-
-    while (len != 0) {
-        if (cl == NULL) {
-            return NGX_AGAIN;
-        }
-
-        if (p == NULL || p == cl->buf->last) {
-            cl = cl->next;
-            p = cl == NULL ? NULL : cl->buf->pos;
-            continue;
-        }
-
-        n = ngx_min(len, (size_t)(cl->buf->last - p));
-        dst = ngx_cpymem(dst, p, n);
-        p += n;
-        cl->buf->pos = p;
-        len -= n;
-    }
-
-    *chain = cl;
-    *pos = p;
-
-    return NGX_OK;
-}
-
-void
-tunnel_utils_chain_advance(ngx_chain_t **chain, u_char **pos, size_t len)
-{
-    size_t       n;
-    ngx_chain_t *cl;
-    u_char      *p;
-
-    cl = *chain;
-    p = *pos;
-
-    while (len != 0 && cl != NULL) {
-        if (p == NULL || p == cl->buf->last) {
-            cl = cl->next;
-            p = cl == NULL ? NULL : cl->buf->pos;
-            continue;
-        }
-
-        n = ngx_min(len, (size_t)(cl->buf->last - p));
-        p += n;
-        cl->buf->pos = p;
-        len -= n;
-    }
-
-    *chain = cl;
-    *pos = p;
+    return 1;
 }
