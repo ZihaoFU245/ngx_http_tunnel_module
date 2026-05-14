@@ -482,7 +482,7 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
 
-    if (ctx->upstream_out != NULL || ctx->downstream_eof) {
+    if (ctx->downstream_eof) {
         return NGX_OK;
     }
 
@@ -532,12 +532,14 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_in, NULL);
     tunnel_utils_free_consumed_chain(ctx, &ctx->upstream_out, NULL);
 
-    if (ctx->downstream_in != NULL && ctx->upstream_out == NULL) {
+    rc = NGX_DECLINED;
+
+    if (ctx->downstream_in != NULL) {
         if (ctx->downstream_filter != NULL) {
             /* Call custom filter for padding or capsule */
             rc = ctx->downstream_filter(ctx, activity);
-            if (rc == NGX_AGAIN) {
-                return NGX_OK;
+            if (rc == NGX_AGAIN && ctx->upstream_out == NULL) {
+                    return NGX_OK;
             }
 
             if (rc == NGX_ERROR || rc >= NGX_HTTP_SPECIAL_RESPONSE) {
@@ -546,7 +548,14 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         }
     }
 
-    cl = (ctx->upstream_out != NULL) ? ctx->upstream_out : ctx->downstream_in;
+    if (ctx->upstream_out != NULL) {
+        cl = ctx->upstream_out;
+    } else if (ctx->downstream_filter == NULL || rc == NGX_DECLINED) {
+        cl = ctx->downstream_in;
+    } else {
+        cl = NULL;
+    }
+
     if (!pc->write->ready || cl == NULL) {
         return NGX_OK;
     }
@@ -602,9 +611,7 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     pc = r->upstream->peer.connection;
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
-    if (pc == NULL || !pc->read->ready || ctx->upstream_in != NULL ||
-        ctx->downstream_out != NULL ||
-        !downstream_output_idle(r, r->connection)) {
+    if (pc == NULL || !pc->read->ready) {
         return NGX_OK;
     }
 
@@ -674,12 +681,14 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     tunnel_utils_free_consumed_chain(ctx, &ctx->upstream_in, NULL);
     tunnel_utils_free_consumed_chain(ctx, &ctx->downstream_out, NULL);
 
-    if (ctx->upstream_in != NULL && ctx->downstream_out == NULL) {
+    rc = NGX_DECLINED;
+
+    if (ctx->upstream_in != NULL) {
         if (ctx->upstream_filter != NULL) {
             /* Call custom filter to do encode operation */
             rc = ctx->upstream_filter(ctx, activity);
-            if (rc == NGX_AGAIN) {
-                return NGX_OK;
+            if (rc == NGX_AGAIN && ctx->downstream_out == NULL) {
+                    return NGX_OK;
             }
 
             if (rc == NGX_ERROR || rc >= NGX_HTTP_SPECIAL_RESPONSE) {
@@ -688,7 +697,14 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         }
     }
 
-    cl = (ctx->downstream_out != NULL) ? ctx->downstream_out : ctx->upstream_in;
+    if (ctx->downstream_out != NULL) {
+        cl = ctx->downstream_out;
+    } else if (ctx->upstream_filter == NULL || rc == NGX_DECLINED) {
+        cl = ctx->upstream_in;
+    } else {
+        cl = NULL;
+    }
+
     if (cl == NULL && downstream_output_idle(r, c)) {
         return NGX_OK;
     }

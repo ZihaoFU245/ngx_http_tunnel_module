@@ -198,57 +198,83 @@ tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     p = cl->buf->pos;
 
     if (capsule_chain_read_varint(&cl, &p, &type, &type_len) != NGX_OK) {
+        if (ctx->downstream_eof) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "DATAGRAM capsule type is incomplete");
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
         return NGX_AGAIN;
     }
 
     if (capsule_chain_read_varint(&cl, &p, &capsule_len, &len_len) != NGX_OK) {
-        return NGX_AGAIN;
-    }
+        if (ctx->downstream_eof) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "DATAGRAM capsule length is incomplete");
+            return NGX_HTTP_BAD_REQUEST;
+        }
 
-    if (capsule_chain_have(cl, p, capsule_len) != NGX_OK) {
         return NGX_AGAIN;
     }
 
     if (type != CAPSULE_DATAGRAM) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                       "Received non-DATAGRAM capsule");
-        return NGX_ERROR;
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     if (capsule_chain_peek(cl, p, &context_first) != NGX_OK) {
+        if (!ctx->downstream_eof) {
+            return NGX_AGAIN;
+        }
+
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP DATAGRAM capsule missing context id");
-        return NGX_ERROR;
+                      "DATAGRAM capsule missing context id");
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     context_len = (size_t)1 << (context_first >> 6);
     if (capsule_len < context_len) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP DATAGRAM capsule context id is truncated");
-        return NGX_ERROR;
+                      "DATAGRAM capsule context id is truncated");
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     if (capsule_chain_read_varint(&cl, &p, &context_id, &context_len) !=
         NGX_OK) {
+        if (!ctx->downstream_eof) {
+            return NGX_AGAIN;
+        }
+
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP DATAGRAM capsule context id is invalid");
-        return NGX_ERROR;
+                      "DATAGRAM capsule context id is invalid");
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     if (context_id != CAPSULE_DATAGRAM_CONTEXT_ID) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP DATAGRAM capsule context id is unsupported");
-        return NGX_ERROR;
+                      "DATAGRAM capsule context id is unsupported");
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     if (capsule_len < context_len) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP DATAGRAM capsule payload is truncated");
-        return NGX_ERROR;
+                      "DATAGRAM capsule payload is truncated");
+        return NGX_HTTP_BAD_REQUEST;
     }
 
     payload_len = (size_t)(capsule_len - context_len);
     header_len = type_len + len_len + context_len;
+
+    if (capsule_chain_have(cl, p, payload_len) != NGX_OK) {
+        if (ctx->downstream_eof) {
+            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                          "DATAGRAM capsule payload is incomplete");
+            return NGX_HTTP_BAD_REQUEST;
+        }
+
+        return NGX_AGAIN;
+    }
 
     if (payload_len == 0) {
         commit = ctx->downstream_in;
