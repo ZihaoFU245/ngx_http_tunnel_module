@@ -55,6 +55,8 @@ Features that are in WIP:
 
 - Nginx 1.30.0 is tested to work.
 
+- Nginx 1.31.0 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
+
 ## How to build
 
 > [!IMPORTANT]
