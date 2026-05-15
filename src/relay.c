@@ -613,7 +613,9 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     pc = r->upstream->peer.connection;
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
 
-    if (pc == NULL || !pc->read->ready) {
+    if (pc == NULL || !pc->read->ready || ctx->upstream_in != NULL ||
+        ctx->downstream_out != NULL ||
+        !downstream_output_idle(r, r->connection)) {
         return NGX_OK;
     }
 

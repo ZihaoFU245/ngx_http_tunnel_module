@@ -62,6 +62,7 @@ typedef struct {
 } tunnel_padding_ctx_t;
 
 typedef struct ngx_http_tunnel_ctx_s ngx_http_tunnel_ctx_t;
+typedef struct tunnel_chain_allocator_s tunnel_chain_allocator_t;
 
 typedef ngx_int_t (*tunnel_relay_filter_pt)(ngx_http_tunnel_ctx_t *ctx,
                                             ngx_uint_t            *activity);
@@ -72,6 +73,7 @@ struct ngx_http_tunnel_ctx_s {
     ngx_chain_t                         *downstream_out;
     ngx_chain_t                         *upstream_in;
     ngx_chain_t                         *upstream_out;
+    tunnel_chain_allocator_t            *chain_allocator;
     size_t                              buffered;
     size_t                              buffer_limit;
     ngx_http_upstream_resolved_t        *resolved;
