@@ -26,9 +26,11 @@ static ngx_inline u_char padding_chain_read_byte(ngx_chain_t **chain,
                                                  u_char      **pos);
 static ngx_inline void padding_chain_advance(ngx_chain_t **chain, u_char **pos,
                                              size_t n);
+#if (NGX_HTTP_V2)
 static ngx_int_t
 padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
                                    ngx_http_v2_out_frame_t  *frame);
+#endif
 
 ngx_int_t
 tunnel_padding_needed(ngx_http_request_t *r)
@@ -472,6 +474,8 @@ padding_fill_response_value(u_char *data, size_t len)
     }
 }
 
+#if (NGX_HTTP_V2)
+
 void
 tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
 {
@@ -629,6 +633,8 @@ padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
 
     return NGX_OK;
 }
+
+#endif
 
 static ngx_inline u_char
 padding_chain_read_byte(ngx_chain_t **chain, u_char **pos)

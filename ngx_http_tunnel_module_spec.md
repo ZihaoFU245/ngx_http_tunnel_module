@@ -546,7 +546,7 @@ tunnel_udp_path $request_uri;
 
 The parser accepts:
 
-- a path ending in `<host>/<port>/`, such as `/.well-known/masque/udp/example.com/443/`
+- the default path `/.well-known/masque/udp/<host>/<port>/`
 - query parameters `h=<host>&p=<port>` or `p=<port>&h=<host>`
 - query parameters `target_host=<host>&target_port=<port>` or `target_port=<port>&target_host=<host>`
 

@@ -156,10 +156,13 @@ tunnel_relay_init_request_body(ngx_http_tunnel_ctx_t *ctx)
         return NGX_OK;
     }
 
-    if (r->stream && r->stream->in_closed) {
+#if (NGX_HTTP_V2)
+    if (r->http_version == NGX_HTTP_VERSION_20 && r->stream &&
+        r->stream->in_closed) {
         ctx->downstream_eof = 1;
         return NGX_OK;
     }
+#endif
 
     r->request_body_no_buffering = 1;
 
@@ -172,12 +175,7 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
-    if (ctx == NULL) {
-        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
-    }
-
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
     tunnel_relay_process(ctx);
 }
 
@@ -186,12 +184,7 @@ tunnel_relay_downstream_write_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
-    if (ctx == NULL) {
-        ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-        return;
-    }
-
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
     tunnel_relay_process(ctx);
 }
 
@@ -405,7 +398,9 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
         r->connection->read->eof = 1;
     }
 
+#if (NGX_HTTP_V2)
     tunnel_padding_h2_prepend_rst_stream_data(ctx);
+#endif
 
     if (rc == NGX_OK && tunnel_relay_is_stream_downstream(r) &&
         r->header_sent &&
@@ -488,8 +483,11 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (!r->reading_body) {
         if (r->request_body != NULL && r->request_body->bufs != NULL) {
-            tunnel_utils_append_chain(&ctx->downstream_in,
-                                      r->request_body->bufs);
+            if (tunnel_utils_append_chain(&ctx->downstream_in,
+                                          r->request_body->bufs)) {
+                ctx->downstream_eof = 1;
+            }
+
             r->request_body->bufs = NULL;
             *activity = 1;
         } else {
@@ -505,7 +503,11 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (r->request_body != NULL && r->request_body->bufs != NULL) {
-        tunnel_utils_append_chain(&ctx->downstream_in, r->request_body->bufs);
+        if (tunnel_utils_append_chain(&ctx->downstream_in,
+                                      r->request_body->bufs)) {
+            ctx->downstream_eof = 1;
+        }
+
         r->request_body->bufs = NULL;
         *activity = 1;
     } else if (rc == NGX_OK && !r->reading_body) {

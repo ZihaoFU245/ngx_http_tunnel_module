@@ -7,7 +7,7 @@
 
 static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
 	{
-		ngx_string("^.*/([^/?#]+)/([0-9]{1,5})/?(?:[?#].*)?$"),
+		ngx_string("^/.well-known/masque/udp/([^/?#]+)/([0-9]{1,5})/(?:[?#].*)?$"),
 		NULL,
 		1,
 		2
@@ -204,13 +204,14 @@ tunnel_utils_free_consumed_chain(ngx_http_tunnel_ctx_t *ctx,
     }
 }
 
-void
+ngx_uint_t
 tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in)
 {
-    ngx_chain_t **ll;
+    ngx_uint_t   last_buf;
+    ngx_chain_t *cl, **ll;
 
     if (in == NULL) {
-        return;
+        return 0;
     }
 
     ll = chain;
@@ -219,6 +220,15 @@ tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in)
     }
 
     *ll = in;
+
+    last_buf = 0;
+    for (cl = in; cl; cl = cl->next) {
+        if (cl->buf->last_buf) {
+            last_buf = 1;
+        }
+    }
+
+    return last_buf;
 }
 
 ngx_int_t
