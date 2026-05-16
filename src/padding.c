@@ -51,7 +51,7 @@ tunnel_padding_buffer_size(ngx_http_request_t *r)
 {
     ngx_http_tunnel_srv_conf_t *tscf;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     return ngx_min(tscf->buffer_size, (size_t)65535) +
            NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE +
@@ -285,7 +285,7 @@ is_padding_enabled(ngx_http_request_t *r)
 {
     ngx_http_tunnel_srv_conf_t *tscf;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     /* Only let HTTP2/3 support padding */
     if (!tscf->padding || !tunnel_relay_is_stream_downstream(r)) {

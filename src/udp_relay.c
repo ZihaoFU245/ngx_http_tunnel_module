@@ -94,7 +94,7 @@ tunnel_udp_relay_start(ngx_http_tunnel_ctx_t *ctx)
 
     ctx->connected = 1;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
     tunnel_utils_update_idle_timer(pc->write, tscf->idle_timeout);
     tunnel_utils_update_idle_timer(pc->read, tscf->idle_timeout);
     tunnel_utils_update_idle_timer(c->write, tscf->idle_timeout);
@@ -110,7 +110,7 @@ udp_downstream_read_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         udp_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
@@ -124,7 +124,7 @@ udp_downstream_write_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         udp_relay_finalize_on_error(r, NULL, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
@@ -246,7 +246,7 @@ udp_relay_process(ngx_http_tunnel_ctx_t *ctx)
     }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
     idle_timeout = tscf->idle_timeout;
 
     if (ngx_handle_write_event(pc->write, 0) != NGX_OK ||

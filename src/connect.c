@@ -71,7 +71,7 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
     switch (proto) {
 
     case CONNECT_UDP:
-        tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+        tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
         if (!tscf->udp) {
             ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
@@ -91,7 +91,7 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
             return NGX_HTTP_BAD_REQUEST;
         }
 
-        ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
+        ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
         return tunnel_udp_init_upstream(r, ctx);
 
     case WEBSOCKET:
@@ -128,7 +128,7 @@ tunnel_connect_process_header(ngx_http_request_t *r)
         return NGX_OK;
     }
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         return NGX_ERROR;
     }
@@ -171,7 +171,7 @@ tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "finalize tunnel upstream request");
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
 
     /*
      * Balance the reference acquired before ngx_http_upstream_init() for

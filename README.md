@@ -1,4 +1,4 @@
-# Nginx HTTP Tunnel Module
+# Nginx HTTP Tunnel Connect Module
 
 > [!NOTE]
 > You might find tunnel performance is limited, typically
@@ -22,7 +22,8 @@ over HTTP/1.1, HTTP2, and HTTP/3.**
 
 ```txt
 Naive Proxy used padding scheme is implemented in here,
-works on h2 and h3 only. HTTP/1.1 is not targeted.
+works on h2 and h3 only. HTTP/1.1 is not targeted and it is
+recommended to use nginx/1.31.* version.
 
 - [x] HTTP/1.1 CONNECT 
 - [x] HTTP/2 CONNECT
@@ -47,6 +48,14 @@ Read scripts/ to find out more information about
 map based acl.
 
 Features that are in WIP:
+
+Refactors that are in WIP:
+
+- [ ] Refactor relay loop, relay.c and udp_relay.c uses similar and duplicated
+	  event loop
+
+Any PR or Issues are welcomed. If you are using Agent coding, please review
+before submitting it.
 ```
 
 ## Tested Nginx Versions
@@ -58,11 +67,6 @@ Features that are in WIP:
 - Nginx 1.31.0 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
 
 ## How to build
-
-> [!IMPORTANT]
-> For nginx version 1.31.0 and later. You must configure with
-> flag `--without-ngx_http_tunnel_module`, compile without vanilla
-> nginx tunnel module.
 
 First fetch source code
 
@@ -129,7 +133,7 @@ Below has an example build configuration.
 	--with-ld-opt='-Wl,-z,relro -Wl,-z,now -fPIC' \	
 	--add-dynamic-module=../ngx_http_tunnel_module \
 	--without-http_tunnel_module
-	# Must build without http tunnel module if you use the custom module
+	# Recommended to build without http tunnel module if you use the custom module
 	# Specifically for nginx 1.31.* versions
 ```
 
@@ -233,13 +237,13 @@ http {
 		ssl_certificate  fullchain.pem;
 		ssl_certificate_key privkey.pem;
 
-		tunnel_pass;                        	# Enable tunnel module
-		tunnel_buffer_size 128k;              	# Buffer size for tunnel relay 
+		tunnel_connect;                        	# Enable tunnel module
+		tunnel_connect_buffer_size 128k;        # Buffer size for tunnel relay 
 
 		# NGINX 1.30 AND OLDER ONLY
-		tunnel_proxy_auth_user_file /path/to/.htaccess;
-		tunnel_probe_resistance off;
-		tunnel_probe_resistance_allow_methods "";
+		tunnel_connect_proxy_auth_user_file /path/to/.htaccess;
+		tunnel_connect_probe_resistance off;
+		tunnel_connect_probe_resistance_allow_methods "";
 
 		# NGINX 1.31.0 AND NEWER
 		# auth_basic $connect_auth_realm;
@@ -252,16 +256,16 @@ http {
 		# 	 return 405;
 		# }
 
-        tunnel_padding off;                 	# Opt in padding scheme for h2/h3
-        tunnel_connect_timeout 60s;
-		tunnel_idle_timeout 30s;
+        tunnel_connect_padding off;             # Opt in padding scheme for h2/h3
+        tunnel_connect_upstream_timeout 60s;
+		tunnel_connect_idle_timeout 30s;
 
 		# 0: deny, 1: allow, 2: deny + log, 3: allow + log.
 		# $connect_target_host is the raw CONNECT authority.
-		tunnel_acl_eval_on $is_granted;
+		tunnel_connect_acl_eval_on $is_granted;
 
-		tunnel_udp on; 							# Enable connect udp with capsule protocol
-		tunnel_udp_path $request_uri; 			# Path variable for parsing masque path
+		tunnel_connect_udp on; 							# Enable connect udp with capsule protocol
+		tunnel_connect_udp_path $request_uri; 			# Path variable for parsing masque path
 
 		# location blocks are recommended to set after
 		# tunnel configurations, as tunnel module
@@ -270,9 +274,7 @@ http {
 		# do not use return here, as it is in rewrite phase,
 		# it will skip tunnel handler. This is a design decision.
 		location / {
-			# A file server example
-		    root /var/www/html;
-			index index.html;
+		    proxy_pass http://localhost:8090;
 
 			# To avoid The Discriminative Power of Cross-layer 
 			# RTTs in Fingerprinting Proxy Traffic
@@ -281,37 +283,45 @@ http {
 			# run a file server here directly.
 		}
     }
+
+	server {
+		listen 127.0.0.1:8090;
+
+		location / {
+			return 200 "Hello there!\n";
+		}
+	}
 }
 ```
 
 ## Config Directives
 
-1. `tunnel_pass`: Enable tunnel module, allow HTTP connect.
+1. `tunnel_connect_pass`: Enable tunnel module, allow HTTP connect.
 
-2. `tunnel_buffer_size`: Size, a symmetric buffer size for tunnel module,
+2. `tunnel_connect_buffer_size`: Size, a symmetric buffer size for tunnel module,
 for upstream buffer and client buffer. Default to 128k, with minimum 64k.
 
-3. `tunnel_proxy_auth_user_file`: path to .htaccess file. This will only support
+3. `tunnel_connect_proxy_auth_user_file`: path to .htaccess file. This will only support
 nginx version 1.30 and below.
 
-4. `tunnel_probe_resistance`: Default to off. When auth failed, it will return 405.
+4. `tunnel_connect_probe_resistance`: Default to off. When auth failed, it will return 405.
 Only nginx 1.30 and below are supported.
 
-5. `tunnel_probe_resistance_allow_methods`: Default to an empty string. And will
-not send "Allow" header when it is empty, used with `tunnel_probe_resistance`.
+5. `tunnel_connect_probe_resistance_allow_methods`: Default to an empty string. And will
+not send "Allow" header when it is empty, used with `tunnel_connect_probe_resistance`.
 
-6. `tunnel_padding`: Default to off. Enable padding scheme defined by naiveproxy.
+6. `tunnel_connect_padding`: Default to off. Enable padding scheme defined by naiveproxy.
 
-7. `tunnel_connect_timeout`: Time, default to 60s. On timeout, internal server error
+7. `tunnel_connect_upstream_timeout`: Time, default to 60s. On timeout, internal server error
 will be send. This happens when upstream server has no response.
 
-8. `tunnel_idle_timeout`: Time, default to 30s. On timeout, tunnel will be closed.
+8. `tunnel_connect_idle_timeout`: Time, default to 30s. On timeout, tunnel will be closed.
 
-9. `tunnel_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
+9. `tunnel_connect_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
 deny/allow. 2/3 means access deny/allow with logging.
 
-10. `tunnel_udp`: Default to on. With connect udp over MASQUE capsule protocol. Client
+10. `tunnel_connect_udp`: Default to on. With connect udp over MASQUE capsule protocol. Client
 send header must present `capsule-protocol = ?1`, otherwise 400 rejected.
 
-11. `tunnel_udp_path`: Complex value, MASQUE encode target host and port in path. Default
+11. `tunnel_connect_udp_path`: Complex value, MASQUE encode target host and port in path. Default
 to `$request_uri`.

@@ -9,77 +9,77 @@
 
 static ngx_command_t ngx_http_tunnel_commands[] = {
 
-    {ngx_string("tunnel_pass"),
+    {ngx_string("tunnel_connect"),
      NGX_HTTP_SRV_CONF | NGX_CONF_NOARGS,
      ngx_http_tunnel_pass,
      NGX_HTTP_SRV_CONF_OFFSET,
      0,
      NULL},
 
-    {ngx_string("tunnel_proxy_auth_user_file"),
+    {ngx_string("tunnel_connect_proxy_auth_user_file"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_http_tunnel_proxy_auth_user_file,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, proxy_auth_user_file),
      NULL},
 
-    {ngx_string("tunnel_buffer_size"),
+    {ngx_string("tunnel_connect_buffer_size"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_size_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, buffer_size),
      NULL},
 
-    {ngx_string("tunnel_connect_timeout"),
+    {ngx_string("tunnel_connect_upstream_timeout"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_msec_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, connect_timeout),
      NULL},
 
-    {ngx_string("tunnel_idle_timeout"),
+    {ngx_string("tunnel_connect_idle_timeout"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_msec_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, idle_timeout),
      NULL},
 
-    {ngx_string("tunnel_probe_resistance"),
+    {ngx_string("tunnel_connect_probe_resistance"),
      NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, probe_resistance),
      NULL},
 
-    {ngx_string("tunnel_probe_resistance_allow_methods"),
+    {ngx_string("tunnel_connect_probe_resistance_allow_methods"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_str_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, probe_resistance_allow_methods),
      NULL},
 
-    {ngx_string("tunnel_padding"),
+    {ngx_string("tunnel_connect_padding"),
      NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, padding),
      NULL},
 
-    {ngx_string("tunnel_udp"),
+    {ngx_string("tunnel_connect_udp"),
      NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, udp),
      NULL},
 
-    {ngx_string("tunnel_udp_path"),
+    {ngx_string("tunnel_connect_udp_path"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      ngx_http_set_complex_value_slot,
      NGX_HTTP_SRV_CONF_OFFSET,
      offsetof(ngx_http_tunnel_srv_conf_t, udp_path),
      NULL},
 
-	{ngx_string("tunnel_acl_eval_on"),
+	{ngx_string("tunnel_connect_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      tunnel_acl_eval_on,
      NGX_HTTP_SRV_CONF_OFFSET,
@@ -103,7 +103,7 @@ static ngx_http_module_t ngx_http_tunnel_module_ctx = {
 	NULL
 };
 
-ngx_module_t ngx_http_tunnel_module = {
+ngx_module_t ngx_http_tunnel_connect_module = {
     NGX_MODULE_V1,
     &ngx_http_tunnel_module_ctx,
     ngx_http_tunnel_commands,
@@ -128,7 +128,7 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (!tscf->enable) {
         return NGX_DECLINED;
@@ -174,7 +174,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (!tscf->enable) {
         return NGX_DECLINED;
@@ -184,7 +184,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx != NULL) {
         return NGX_DONE;
     }
@@ -229,7 +229,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         }
     }
 
-    ngx_http_set_ctx(r, ctx, ngx_http_tunnel_module);
+    ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
 
     if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -475,7 +475,7 @@ ngx_tunnel_skip_phase_handler(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (!tscf->enable) {
         return NGX_DECLINED;
@@ -499,7 +499,7 @@ ngx_http_tunnel_init(ngx_conf_t *cf)
 
     /* Do not register handlers if no tunnel servers are enabled */
     for (i = 0; i < cmcf->servers.nelts; i++) {
-        tscf = cscfp[i]->ctx->srv_conf[ngx_http_tunnel_module.ctx_index];
+        tscf = cscfp[i]->ctx->srv_conf[ngx_http_tunnel_connect_module.ctx_index];
 
         if (tscf->enable) {
             goto enabled;

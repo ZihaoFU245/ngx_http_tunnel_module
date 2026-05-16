@@ -82,7 +82,7 @@ typedef struct {
     unsigned                            read_again_event_posted : 1;
 } ngx_http_tunnel_ctx_t;
 
-extern ngx_module_t ngx_http_tunnel_module;
+extern ngx_module_t ngx_http_tunnel_connect_module;
 
 char *ngx_http_tunnel_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 char *tunnel_acl_eval_on(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);

@@ -56,7 +56,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     c->log->action = "tunneling connection";
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (clcf->tcp_nodelay) {
         if (r->http_version == NGX_HTTP_VERSION_20 &&
@@ -117,7 +117,7 @@ tunnel_relay_send_connected(ngx_http_request_t *r, ngx_uint_t allow_padding)
     ngx_int_t              rc;
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = -1;
@@ -172,7 +172,7 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
@@ -186,7 +186,7 @@ tunnel_relay_downstream_write_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
@@ -313,7 +313,7 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
     }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
     idle_timeout = tscf->idle_timeout;
 
     if (ngx_handle_write_event(pc->write, 0) != NGX_OK ||

@@ -25,7 +25,7 @@ tunnel_udp_set_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_str_t                   params;
     ngx_http_tunnel_srv_conf_t *tscf;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (ctx->resolved == NULL) {
         ctx->resolved =
@@ -50,7 +50,7 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_http_upstream_t        *u;
     ngx_http_tunnel_srv_conf_t *tscf;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -106,7 +106,7 @@ tunnel_udp_process_header(ngx_http_request_t *r)
     r->keepalive = 0;
     u->keepalive = 0;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
         return NGX_ERROR;
     }

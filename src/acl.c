@@ -16,7 +16,7 @@ tunnel_acl_eval(ngx_http_request_t *r)
     ngx_http_variable_value_t  *value;
     ngx_http_tunnel_srv_conf_t *tscf;
 
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (tscf->acl_eval_index == NGX_CONF_UNSET_UINT) {
         return NGX_OK;
