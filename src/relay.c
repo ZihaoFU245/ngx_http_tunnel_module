@@ -175,7 +175,7 @@ tunnel_relay_downstream_read_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     tunnel_relay_process(ctx);
 }
 
@@ -184,7 +184,7 @@ tunnel_relay_downstream_write_handler(ngx_http_request_t *r)
 {
     ngx_http_tunnel_ctx_t *ctx;
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_module);
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     tunnel_relay_process(ctx);
 }
 
@@ -611,7 +611,7 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_module);
+    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
     if (pc == NULL || !pc->read->ready || ctx->upstream_in != NULL ||
         ctx->downstream_out != NULL ||

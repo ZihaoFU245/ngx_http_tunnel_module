@@ -49,7 +49,7 @@ tunnel_utils_free_consumed_chain(ngx_http_tunnel_ctx_t *ctx,
         b = cl->buf;
         *chain = cl->next;
 
-        if (b->tag == (ngx_buf_tag_t)&ngx_http_tunnel_module) {
+        if (b->tag == (ngx_buf_tag_t)&ngx_http_tunnel_connect_module) {
             ctx->buffered = (ctx->buffered > (size_t)(b->end - b->start))
                                 ? ctx->buffered - (size_t)(b->end - b->start)
                                 : 0;
@@ -114,7 +114,7 @@ tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx, ngx_chain_t **cl,
         return NGX_ERROR;
     }
 
-    b->tag = (ngx_buf_tag_t)&ngx_http_tunnel_module;
+    b->tag = (ngx_buf_tag_t)&ngx_http_tunnel_connect_module;
     (*cl)->buf = b;
     (*cl)->next = NULL;
     ctx->buffered += alloc_size;
@@ -228,5 +228,5 @@ chain_allocator_reset_temp_buf(ngx_buf_t *b)
     b->start = start;
     b->end = end;
     b->temporary = 1;
-    b->tag = (ngx_buf_tag_t)&ngx_http_tunnel_module;
+    b->tag = (ngx_buf_tag_t)&ngx_http_tunnel_connect_module;
 }
