@@ -8,8 +8,6 @@
 
 #include "ngx_http_tunnel_module.h"
 
-static ngx_int_t capsule_decode_varint(u_char **pos, u_char *last,
-                                       uint64_t *value);
 static ngx_int_t capsule_encode_varint(u_char **pos, u_char *last,
                                        uint64_t value);
 static ngx_int_t capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos,
@@ -84,89 +82,6 @@ tunnel_capsule_varint_size(uint64_t value)
     }
 
     return 0;
-}
-
-ngx_int_t
-tunnel_capsule_decode(ngx_buf_t *src, tunnel_capsule_t *capsule)
-{
-    u_char  *p, *payload;
-    uint64_t type, len;
-
-    if (src == NULL || capsule == NULL || capsule->payload == NULL) {
-        return NGX_ERROR;
-    }
-
-    p = src->pos;
-
-    if (capsule_decode_varint(&p, src->last, &type) != NGX_OK) {
-        return NGX_AGAIN;
-    }
-
-    if (capsule_decode_varint(&p, src->last, &len) != NGX_OK) {
-        return NGX_AGAIN;
-    }
-
-    if (len > (uint64_t)(src->last - p)) {
-        return NGX_AGAIN;
-    }
-
-    payload = p;
-    p += (size_t)len;
-
-    capsule->payload->pos = payload;
-    capsule->payload->last = p;
-    capsule->payload->start = payload;
-    capsule->payload->end = p;
-    capsule->payload->memory = 1;
-
-    capsule->type = type;
-    capsule->len = len;
-
-    src->pos = p;
-
-    return NGX_OK;
-}
-
-ngx_int_t
-tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule)
-{
-    u_char *p;
-    size_t  payload_len;
-
-    if (dst == NULL || capsule == NULL || capsule->payload == NULL) {
-        return NGX_ERROR;
-    }
-
-    payload_len = ngx_buf_size(capsule->payload);
-
-    if ((uint64_t)payload_len != capsule->len) {
-        return NGX_ERROR;
-    }
-
-    /* Check if varint is not out of range */
-    if (tunnel_capsule_varint_size(capsule->type) == 0 ||
-        tunnel_capsule_varint_size(capsule->len) == 0) {
-        return NGX_ERROR;
-    }
-
-    /* Check if enough buffer has enough space */
-    if ((size_t)(dst->end - dst->last) <
-        tunnel_capsule_varint_size(capsule->type) +
-            tunnel_capsule_varint_size(capsule->len) + payload_len) {
-        return NGX_AGAIN;
-    }
-
-    p = dst->last;
-
-    if (capsule_encode_varint(&p, dst->end, capsule->type) != NGX_OK ||
-        capsule_encode_varint(&p, dst->end, capsule->len) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    p = ngx_cpymem(p, capsule->payload->pos, payload_len);
-    dst->last = p;
-
-    return NGX_OK;
 }
 
 /*
@@ -401,54 +316,6 @@ tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     return NGX_OK;
 }
 
-/*
- * Capsule Decoder
- *
- * @param pos `&src->pos`, src is ngx_buf_t
- * @param last `src->last`, src is ngx_buf_t
- * @param value reference to store the value
- *
- * Eg. (&src->pos, src->last, &type)
- */
-static ngx_int_t
-capsule_decode_varint(u_char **pos, u_char *last, uint64_t *value)
-{
-    u_char    *p;
-    ngx_uint_t prefix, len, i;
-    uint64_t   n;
-
-    if (pos == NULL || *pos == NULL || value == NULL || *pos == last) {
-        return NGX_AGAIN;
-    }
-
-    p = *pos;
-    prefix = p[0] >> 6;
-    len = (ngx_uint_t)1 << prefix;
-
-    if ((size_t)(last - p) < len) {
-        return NGX_AGAIN;
-    }
-
-    n = p[0] & 0x3f;
-    for (i = 1; i < len; i++) {
-        n = (n << 8) | p[i];
-    }
-
-    *value = n;
-    *pos = p + len;
-
-    return NGX_OK;
-}
-
-/*
- * Capsule encoder
- *
- * @param pos `&dst->last` point to the last byte of valid buffer
- * @param last `dst->end` end of buffer
- * @param The length of the QUIC varint
- *
- * Eg. (&dst->last, dst->end, capsule->type)
- */
 static ngx_int_t
 capsule_encode_varint(u_char **pos, u_char *last, uint64_t value)
 {

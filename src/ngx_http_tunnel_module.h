@@ -34,12 +34,6 @@ typedef struct {
 } tunnel_extended_connect_regex_t;		/* Regex patterns for matching capsule protocol */
 
 typedef struct {
-	uint64_t 							type;
-	uint64_t 							len;
-	ngx_buf_t 							*payload;
-} tunnel_capsule_t;
-
-typedef struct {
 	ngx_flag_t 							enable;
 	ngx_http_upstream_conf_t 			upstream;
 	ngx_http_complex_value_t 			*proxy_auth_user_file;
@@ -62,7 +56,6 @@ typedef struct {
 } tunnel_padding_ctx_t;
 
 typedef struct ngx_http_tunnel_ctx_s ngx_http_tunnel_ctx_t;
-typedef struct tunnel_chain_allocator_s tunnel_chain_allocator_t;
 
 typedef ngx_int_t (*tunnel_relay_filter_pt)(ngx_http_tunnel_ctx_t *ctx,
                                             ngx_uint_t            *activity);
@@ -73,8 +66,9 @@ struct ngx_http_tunnel_ctx_s {
     ngx_chain_t                         *downstream_out;
     ngx_chain_t                         *upstream_in;
     ngx_chain_t                         *upstream_out;
-    tunnel_chain_allocator_t            *chain_allocator;
+    ngx_chain_t                         *free_chain;
     size_t                              buffered;
+    size_t                              free_buffered;
     size_t                              buffer_limit;
     ngx_http_upstream_resolved_t        *resolved;
     tunnel_padding_ctx_t                *padding;
@@ -133,8 +127,6 @@ ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
 
 ngx_int_t tunnel_capsule_is_header_present(ngx_http_request_t *r);
 size_t    tunnel_capsule_varint_size(uint64_t value);
-ngx_int_t tunnel_capsule_decode(ngx_buf_t *src, tunnel_capsule_t *capsule);
-ngx_int_t tunnel_capsule_encode(ngx_buf_t *dst, tunnel_capsule_t *capsule);
 ngx_int_t tunnel_capsule_decode_datagram(ngx_http_tunnel_ctx_t *ctx,
                                          ngx_uint_t            *activity);
 ngx_int_t tunnel_capsule_encode_datagram(ngx_http_tunnel_ctx_t *ctx,
