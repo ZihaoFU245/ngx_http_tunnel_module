@@ -179,6 +179,7 @@ void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_tunnel_ctx_t *ctx,
                                       ngx_chain_t **chain, ngx_chain_t *limit);
+void tunnel_utils_free_cached_chain(ngx_http_tunnel_ctx_t *ctx);
 ngx_uint_t tunnel_utils_append_chain(ngx_chain_t **chain, ngx_chain_t *in);
 ngx_int_t tunnel_utils_alloc_chain_buf(ngx_http_tunnel_ctx_t *ctx,
                                        ngx_chain_t **cl, size_t size);

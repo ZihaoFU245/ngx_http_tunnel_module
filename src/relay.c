@@ -451,6 +451,8 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
         }
     }
 
+    tunnel_utils_free_cached_chain(ctx);
+
     if (r->header_sent && rc >= NGX_HTTP_SPECIAL_RESPONSE) {
         rc = NGX_ERROR;
     }
