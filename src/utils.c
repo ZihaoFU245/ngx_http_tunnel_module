@@ -41,15 +41,13 @@ static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
 	}
 };
 
-static ngx_chain_t *utils_get_free_buf(ngx_http_tunnel_ctx_t *ctx,
-                                       size_t size);
-static size_t      utils_alloc_size(size_t size);
-static ngx_uint_t  utils_buf_match(size_t capacity, size_t size);
-static void        utils_reset_temp_buf(ngx_buf_t *b);
-static ngx_uint_t  utils_cache_free_buf(ngx_http_tunnel_ctx_t *ctx,
-                                        ngx_chain_t *cl, size_t size);
-static void        utils_reclaim_free_bufs(ngx_http_tunnel_ctx_t *ctx,
-                                           size_t need);
+static ngx_chain_t *utils_get_free_buf(ngx_http_tunnel_ctx_t *ctx, size_t size);
+static size_t       utils_alloc_size(size_t size);
+static ngx_uint_t   utils_buf_match(size_t capacity, size_t size);
+static void         utils_reset_temp_buf(ngx_buf_t *b);
+static ngx_uint_t   utils_cache_free_buf(ngx_http_tunnel_ctx_t *ctx,
+                                         ngx_chain_t *cl, size_t size);
+static void utils_reclaim_free_bufs(ngx_http_tunnel_ctx_t *ctx, size_t need);
 
 ngx_int_t
 tunnel_utils_init_extended_connect(ngx_conf_t *cf)
@@ -243,11 +241,10 @@ tunnel_utils_free_cached_chain(ngx_http_tunnel_ctx_t *ctx)
 
         b = cl->buf;
         size = (size_t)(b->end - b->start);
-        ctx->free_buffered = (ctx->free_buffered > size)
-                                 ? ctx->free_buffered - size
-                                 : 0;
+        ctx->free_buffered =
+            (ctx->free_buffered > size) ? ctx->free_buffered - size : 0;
 
-        (void) ngx_pfree(r->pool, b->start);
+        (void)ngx_pfree(r->pool, b->start);
         ngx_free_chain(r->pool, cl);
     }
 }
@@ -358,7 +355,7 @@ static ngx_chain_t *
 utils_get_free_buf(ngx_http_tunnel_ctx_t *ctx, size_t size)
 {
     size_t       capacity;
-    ngx_buf_t  *b;
+    ngx_buf_t   *b;
     ngx_chain_t *cl, **ll;
 
     for (ll = &ctx->free_chain; *ll != NULL; ll = &(*ll)->next) {
@@ -389,8 +386,7 @@ utils_buf_match(size_t capacity, size_t size)
     }
 
     if (size <= NGX_HTTP_TUNNEL_MEDIUM_BUF_SIZE) {
-        return capacity >= size &&
-               capacity <= NGX_HTTP_TUNNEL_MEDIUM_BUF_SIZE;
+        return capacity >= size && capacity <= NGX_HTTP_TUNNEL_MEDIUM_BUF_SIZE;
     }
 
     return capacity >= size;
@@ -465,11 +461,10 @@ utils_reclaim_free_bufs(ngx_http_tunnel_ctx_t *ctx, size_t need)
 
         b = cl->buf;
         size = (size_t)(b->end - b->start);
-        ctx->free_buffered = (ctx->free_buffered > size)
-                                 ? ctx->free_buffered - size
-                                 : 0;
+        ctx->free_buffered =
+            (ctx->free_buffered > size) ? ctx->free_buffered - size : 0;
 
-        (void) ngx_pfree(r->pool, b->start);
+        (void)ngx_pfree(r->pool, b->start);
         ngx_free_chain(r->pool, cl);
     }
 }

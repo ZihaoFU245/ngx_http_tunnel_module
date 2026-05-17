@@ -7,6 +7,7 @@
 #include "ngx_http_tunnel_module.h"
 
 #define NGX_HTTP_RELAY_MAX_ITERATIONS 64
+#define NGX_HTTP_RELAY_READ_SIZE 4096
 #define RELAY_CHECK_PERIOD 8
 
 static void                  request_body_post_handler(ngx_http_request_t *r);
@@ -646,7 +647,9 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_OK;
     }
 
-    size = tscf->buffer_size;
+    size = (pc->type == SOCK_DGRAM)
+               ? tscf->buffer_size
+               : ngx_min(tscf->buffer_size, (size_t)NGX_HTTP_RELAY_READ_SIZE);
     rc = tunnel_utils_alloc_chain_buf(ctx, &cl, size);
     if (rc == NGX_AGAIN) {
         return NGX_OK;

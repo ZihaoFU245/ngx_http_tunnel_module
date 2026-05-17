@@ -122,8 +122,8 @@ tunnel_padding_decode_downstream(ngx_http_tunnel_ctx_t *ctx,
         }
 
         pos = cl->buf->pos;
-        if (!tunnel_utils_chain_have(
-                cl, pos, NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE)) {
+        if (!tunnel_utils_chain_have(cl, pos,
+                                     NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE)) {
             if (ctx->downstream_eof) {
                 ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                               "padding request ended with incomplete frame");
