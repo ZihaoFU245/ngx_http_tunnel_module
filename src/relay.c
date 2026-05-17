@@ -341,6 +341,11 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         tunnel_relay_post_downstream_read(ctx);
     }
 
+    if (i == NGX_HTTP_RELAY_MAX_ITERATIONS && activity &&
+        !ctx->read_again_event_posted) {
+        tunnel_relay_post_downstream_read(ctx);
+    }
+
     return;
 
 failed:
@@ -523,10 +528,11 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     ssize_t             n;
     size_t              size;
     ngx_buf_t          *b;
-    ngx_chain_t        *cl;
+    ngx_chain_t        *cl, **chain, *out;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
     ngx_int_t           rc;
+    u_char             *before_pos;
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
@@ -562,6 +568,25 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_OK;
     }
 
+    if (pc->type != SOCK_DGRAM) {
+        chain = (ctx->upstream_out != NULL) ? &ctx->upstream_out
+                                            : &ctx->downstream_in;
+        before_pos = cl->buf->pos;
+        out = pc->send_chain(pc, cl, 0);
+
+        if (out == NGX_CHAIN_ERROR) {
+            return NGX_DONE;
+        }
+
+        if (out != cl || cl->buf->pos != before_pos) {
+            *activity = 1;
+        }
+
+        tunnel_utils_free_consumed_chain(ctx, chain, out);
+
+        return NGX_OK;
+    }
+
     b = cl->buf;
     size = b->last - b->pos;
     n = pc->send(pc, b->pos, size);
@@ -574,7 +599,7 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_DONE;
     }
 
-    if (r->upstream->peer.type == SOCK_DGRAM && n != (ssize_t)size) {
+    if (pc->type == SOCK_DGRAM && n != (ssize_t)size) {
         pc->write->error = 1;
         return NGX_DONE;
     }
