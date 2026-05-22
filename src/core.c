@@ -212,6 +212,16 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    /*
+     * For padding/capsule headers only.
+     * Reserve 32 bytes. Padding headers only use 3 bytes, capsule contains
+     * 2 varint, at most 16 bytes. reserve 32 is adequate.
+     */
+    ctx->downstream_out.buf = ngx_create_temp_buf(r->pool, HEADER_RESERVE_BYTES);
+    if (ctx->downstream_out.buf == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
     /* Extended connect branching */
     rc = tunnel_extended_connect_branching(r, ctx);
     if (rc != NGX_DECLINED) {
@@ -224,9 +234,8 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
-        if (tunnel_padding_negotiate(r, ctx->padding) != NGX_OK) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
+        ctx->downstream_filter = tunnel_padding_downstream_filter;
+        ctx->upstream_filter = tunnel_padding_upstream_filter;
     }
 
     ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);

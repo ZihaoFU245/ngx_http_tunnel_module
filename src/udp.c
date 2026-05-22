@@ -61,6 +61,9 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
         return rc;
     }
 
+    ctx->downstream_filter = tunnel_capsule_downstream_filter;
+    ctx->upstream_filter = tunnel_capsule_upstream_filter;
+
     u = r->upstream;
     u->peer.type = SOCK_DGRAM;
     u->conf = &tscf->upstream;
@@ -111,7 +114,7 @@ tunnel_udp_process_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
-    rc = tunnel_udp_relay_start(ctx);
+    rc = tunnel_relay_start(ctx);
     if (rc != NGX_OK) {
         tunnel_relay_finalize(ctx, rc >= NGX_HTTP_SPECIAL_RESPONSE
                                        ? rc

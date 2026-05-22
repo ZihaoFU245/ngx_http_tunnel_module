@@ -7,7 +7,7 @@
 
 static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
 	{
-		ngx_string("^.*/([^/?#]+)/([0-9]{1,5})/?(?:[?#].*)?$"),
+		ngx_string("^/\\.well-known/masque/udp/([^/?#]+)/([0-9]{1,5})/(?:[?#].*)?$"),
 		NULL,
 		1,
 		2

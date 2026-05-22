@@ -35,6 +35,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     ngx_connection_t           *pc;
     ngx_http_cleanup_t         *cln;
     ngx_int_t                   rc;
+    ngx_uint_t                  datagram;
     ngx_http_request_t         *r;
     ngx_http_upstream_t        *u;
     ngx_http_core_loc_conf_t   *clcf;
@@ -49,11 +50,14 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
         return NGX_ERROR;
     }
 
+    datagram = (pc->type == SOCK_DGRAM);
+
     tunnel_utils_clear_timer(pc->read);
     tunnel_utils_clear_timer(pc->write);
 
     r->keepalive = 0;
-    c->log->action = "tunneling connection";
+    c->log->action =
+        datagram ? "tunneling UDP capsules" : "tunneling connection";
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
@@ -64,7 +68,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
             return NGX_ERROR;
         }
 
-        if (ngx_tcp_nodelay(pc) != NGX_OK) {
+        if (!datagram && ngx_tcp_nodelay(pc) != NGX_OK) {
             return NGX_ERROR;
         }
     }
@@ -74,7 +78,7 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
         return rc;
     }
 
-    if (tunnel_relay_send_connected(r, 1) != NGX_OK) {
+    if (tunnel_relay_send_connected(r) != NGX_OK) {
         return NGX_ERROR;
     }
 
@@ -112,23 +116,15 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 }
 
 ngx_int_t
-tunnel_relay_send_connected(ngx_http_request_t *r, ngx_uint_t allow_padding)
+tunnel_relay_send_connected(ngx_http_request_t *r)
 {
     ngx_int_t              rc;
-    ngx_http_tunnel_ctx_t *ctx;
-
-    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
 
     r->headers_out.status = NGX_HTTP_OK;
     r->headers_out.content_length_n = -1;
     r->headers_out.content_length = NULL;
     ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
     ngx_str_null(&r->headers_out.content_type);
-
-    if (allow_padding &&
-        tunnel_padding_add_response_header(r, ctx->padding) != NGX_OK) {
-        return NGX_ERROR;
-    }
 
     rc = ngx_http_send_header(r);
     if (rc == NGX_ERROR || rc > NGX_OK) {
@@ -223,7 +219,7 @@ void
 tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
 {
     ngx_int_t                   rc;
-    ngx_uint_t                  i, flags, activity, loop_activity;
+    ngx_uint_t                  i, flags, activity, datagram, loop_activity;
     ngx_uint_t                  upload_drained;
     ngx_msec_t                  idle_timeout;
     ngx_connection_t           *c, *pc;
@@ -244,6 +240,8 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         return;
     }
 
+    datagram = (pc->type == SOCK_DGRAM);
+
     if (c->read->timedout || c->write->timedout || pc->read->timedout ||
         pc->write->timedout) {
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT,
@@ -253,6 +251,7 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
     }
 
     activity = 0;
+    upload_drained = 0;
 
     for (i = 0; i < NGX_HTTP_RELAY_MAX_ITERATIONS; i++) {
         loop_activity = 0;
@@ -263,17 +262,7 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
             return;
         }
 
-        rc = recv_downstream(ctx, &loop_activity);
-        if (rc != NGX_OK) {
-            goto failed;
-        }
-
         rc = send_upstream(ctx, &loop_activity);
-        if (rc != NGX_OK) {
-            goto failed;
-        }
-
-        rc = recv_upstream(ctx, &loop_activity);
         if (rc != NGX_OK) {
             goto failed;
         }
@@ -283,18 +272,36 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
             goto failed;
         }
 
+        rc = recv_upstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
+        rc = recv_downstream(ctx, &loop_activity);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
+
         if (loop_activity) {
             activity = 1;
         }
 
-        if (is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+        if (datagram && (c->read->eof || c->write->error || pc->read->error ||
+                         pc->write->error)) {
             tunnel_relay_finalize(ctx, NGX_OK);
             return;
         }
 
-        rc = close_upstream_write(ctx, upload_drained);
-        if (rc != NGX_OK) {
-            goto failed;
+        if (!datagram && is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+            tunnel_relay_finalize(ctx, NGX_OK);
+            return;
+        }
+
+        if (!datagram) {
+            rc = close_upstream_write(ctx, upload_drained);
+            if (rc != NGX_OK) {
+                goto failed;
+            }
         }
 
         if (!loop_activity) {
@@ -302,14 +309,22 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         }
     }
 
-    if (is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+    if (datagram && (c->read->eof || c->write->error || pc->read->error ||
+                     pc->write->error)) {
         tunnel_relay_finalize(ctx, NGX_OK);
         return;
     }
 
-    rc = close_upstream_write(ctx, upload_drained);
-    if (rc != NGX_OK) {
-        goto failed;
+    if (!datagram && is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+        tunnel_relay_finalize(ctx, NGX_OK);
+        return;
+    }
+
+    if (!datagram) {
+        rc = close_upstream_write(ctx, upload_drained);
+        if (rc != NGX_OK) {
+            goto failed;
+        }
     }
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
@@ -343,8 +358,11 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         ctx->read_again_event_posted = 0;
     }
 
-    if (!ctx->read_again_event_posted && upload_drained && r->reading_body &&
-        !ctx->downstream_eof && !pc->read->eof) {
+    if (!ctx->read_again_event_posted &&
+        ((datagram &&
+          ctx->upstream_buffer->pos == ctx->upstream_buffer->last) ||
+         (!datagram && upload_drained)) &&
+        r->reading_body && !ctx->downstream_eof && !pc->read->eof) {
         tunnel_relay_post_downstream_read(ctx);
     }
 
@@ -478,17 +496,42 @@ static ngx_int_t
 recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     ngx_int_t           rc;
+    ngx_uint_t          datagram;
+    ngx_chain_t        *cl;
     ngx_http_request_t *r;
 
     r = ctx->request;
+    datagram = (r->upstream->peer.connection->type == SOCK_DGRAM);
 
-    if (ctx->downstream_chain != NULL || ctx->downstream_eof) {
+    if (ctx->downstream_eof) {
+        return NGX_OK;
+    }
+
+    if (ctx->downstream_in != NULL && ctx->downstream_filter == NULL) {
+        return NGX_OK;
+    }
+
+    if (ctx->downstream_in != NULL &&
+        ctx->upstream_buffer->pos != ctx->upstream_buffer->last) {
+        return NGX_OK;
+    }
+
+    if (datagram && ctx->upstream_buffer->pos != ctx->upstream_buffer->last) {
         return NGX_OK;
     }
 
     if (!r->reading_body) {
         if (r->request_body != NULL && r->request_body->bufs != NULL) {
-            ctx->downstream_chain = r->request_body->bufs;
+            if (ctx->downstream_in == NULL) {
+                ctx->downstream_in = r->request_body->bufs;
+            } else {
+                cl = ctx->downstream_in;
+                while (cl->next) {
+                    cl = cl->next;
+                }
+                cl->next = r->request_body->bufs;
+            }
+
             r->request_body->bufs = NULL;
             *activity = 1;
         } else {
@@ -504,7 +547,16 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (r->request_body != NULL && r->request_body->bufs != NULL) {
-        ctx->downstream_chain = r->request_body->bufs;
+        if (ctx->downstream_in == NULL) {
+            ctx->downstream_in = r->request_body->bufs;
+        } else {
+            cl = ctx->downstream_in;
+            while (cl->next) {
+                cl = cl->next;
+            }
+            cl->next = r->request_body->bufs;
+        }
+
         r->request_body->bufs = NULL;
         *activity = 1;
     } else if (rc == NGX_OK && !r->reading_body) {
@@ -517,9 +569,12 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 static ngx_int_t
 send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
+    off_t               before_sent;
     ssize_t             n;
     size_t              size;
+    u_char             *before_pos;
     ngx_buf_t          *b;
+    ngx_chain_t        *cl, *out;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
     ngx_int_t           rc;
@@ -528,31 +583,55 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     pc = r->upstream->peer.connection;
     b = ctx->upstream_buffer;
 
-    tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+    tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
 
     if (b->pos == b->last) {
         b->pos = b->start;
         b->last = b->start;
 
-        if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-            ctx->padding->downstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-            rc = tunnel_padding_decode_downstream(
-                ctx->padding, r, &ctx->downstream_chain, ctx->downstream_eof, b,
-                activity);
-            if (rc != NGX_OK && rc != NGX_AGAIN && rc != NGX_DECLINED) {
-                return rc;
-            }
-
-            if (rc != NGX_DECLINED && b->pos == b->last) {
+        /*
+         * Call custom filters. filters are used to transform data
+         * for padding/capsule purpose.
+         */
+        if (ctx->downstream_filter != NULL && ctx->downstream_in != NULL) {
+            rc = ctx->downstream_filter(ctx, activity);
+            if (rc == NGX_AGAIN) {
                 return NGX_OK;
+            }
+            if (rc != NGX_OK) {
+                return rc;
             }
         }
 
-        if (ctx->downstream_chain != NULL && b->pos == b->last) {
-            if (tunnel_utils_copy_chain_to_buffer(r, &ctx->downstream_chain, b,
-                                                  (size_t)-1)) {
+        if (ctx->downstream_filter == NULL && ctx->downstream_in != NULL &&
+            b->pos == b->last) {
+            if (!pc->write->ready) {
+                return NGX_OK;
+            }
+
+            cl = ctx->downstream_in;
+            before_sent = pc->sent;
+            before_pos = cl->buf->pos;
+
+            /*
+             * If no filter transforming data, send downstream_in directly
+             * without copy
+             */
+            out = pc->send_chain(pc, cl, 0);
+            if (out == NGX_CHAIN_ERROR) {
+                pc->write->error = 1;
+                return NGX_DONE;
+            }
+
+            if (pc->sent != before_sent || out != cl ||
+                cl->buf->pos != before_pos) {
                 *activity = 1;
             }
+
+            tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, out);
+            ctx->downstream_in = out;
+
+            return NGX_OK;
         }
     }
 
@@ -568,6 +647,12 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (n == NGX_ERROR) {
+        pc->write->error = 1;
+        return NGX_DONE;
+    }
+
+    if (pc->type == SOCK_DGRAM && n != (ssize_t)size) {
+        pc->write->error = 1;
         return NGX_DONE;
     }
 
@@ -578,7 +663,7 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         if (b->pos == b->last) {
             b->pos = b->start;
             b->last = b->start;
-            tunnel_utils_free_consumed_chain(r, &ctx->downstream_chain, NULL);
+            tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
         }
     }
 
@@ -589,11 +674,10 @@ static ngx_int_t
 recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     ssize_t             n;
-    size_t              reserve, size;
+    size_t              size;
     ngx_buf_t          *b;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
-    ngx_int_t           rc;
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
@@ -606,21 +690,17 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     b->pos = b->start;
     b->last = b->start;
+    size = b->end - b->last;
 
     if (tunnel_padding_active(ctx->padding) == NGX_OK &&
         ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-        reserve = NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE;
-
-        if ((size_t)(b->end - b->start) <=
-            reserve + NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        if (size <= NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
+            b->last = b->start;
+            return NGX_OK;
         }
 
-        b->last = b->start + reserve;
-        size = b->end - b->last - NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
+        size -= NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
         size = ngx_min(size, (size_t)65535);
-    } else {
-        size = b->end - b->last;
     }
 
     if (size == 0) {
@@ -637,6 +717,10 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (n == 0) {
         b->last = b->start;
+        if (pc->type == SOCK_DGRAM) {
+            return NGX_OK;
+        }
+
         pc->read->eof = 1;
         pc->read->ready = 0;
         return NGX_OK;
@@ -651,17 +735,6 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     b->last += n;
-
-    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-        rc = tunnel_padding_encode_downstream(ctx->padding, b, (size_t)n);
-        if (rc != NGX_OK) {
-            b->pos = b->start;
-            b->last = b->start;
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-    }
-
     *activity = 1;
 
     return NGX_OK;
@@ -678,6 +751,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     ngx_uint_t          before_c_buffered;
     ngx_uint_t          before_r_buffered;
     ngx_chain_t         out;
+    ngx_chain_t        *chain;
     ngx_connection_t   *c;
     ngx_http_request_t *r;
 
@@ -700,10 +774,36 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     } else {
         out.buf = b;
         out.next = NULL;
+        chain = &out;
+
+        /*
+         * Call upstream filters, upstream filters are used to
+         * transform data for padding / capsules.
+         * Data is read directly into client_buffer, so we reserve
+         * a 32 bytes field for storing additional headers.
+         * downstream_out->buf must never be mutated. It always
+         * points to the 32 bytes fixed buffer.
+         */
+        if (ctx->upstream_filter != NULL) {
+            rc = ctx->upstream_filter(ctx, activity);
+            if (rc == NGX_AGAIN) {
+                return NGX_OK;
+            }
+            if (rc == NGX_OK) {
+                ctx->downstream_out.next = &out;
+                chain = &ctx->downstream_out;
+            } else if (rc != NGX_DECLINED) {
+                return rc;
+            }
+        }
 
         b->flush = 1;
-        rc = ngx_http_output_filter(r, &out);
+        rc = ngx_http_output_filter(r, chain);
         b->flush = 0;
+
+        if (chain == &ctx->downstream_out) {
+            ctx->downstream_out.next = NULL;
+        }
     }
 
     if (rc == NGX_ERROR) {
@@ -776,7 +876,7 @@ is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
 {
     ngx_uint_t download_drained;
 
-    *upload_drained = (ctx->downstream_chain == NULL &&
+    *upload_drained = (ctx->downstream_in == NULL &&
                        ctx->upstream_buffer->pos == ctx->upstream_buffer->last);
 
     download_drained = (ctx->client_buffer->pos == ctx->client_buffer->last &&

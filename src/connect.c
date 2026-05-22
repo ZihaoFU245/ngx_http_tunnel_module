@@ -133,6 +133,10 @@ tunnel_connect_process_header(ngx_http_request_t *r)
         return NGX_ERROR;
     }
 
+    if (tunnel_padding_add_response_header(r, ctx->padding) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
     /*
      * HTTP/2 and HTTP/3 CONNECT downstreams are streams, not raw client
      * sockets. After upstream connects, the module takes over with a
