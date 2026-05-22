@@ -51,9 +51,6 @@ Features that are in WIP:
 
 Refactors that are in WIP:
 
-- [ ] Refactor relay loop, relay.c and udp_relay.c uses similar and duplicated
-	  event loop
-
 Any PR or Issues are welcomed. If you are using Agent coding, please review
 before submitting it.
 ```
