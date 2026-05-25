@@ -44,18 +44,6 @@ tunnel_padding_needed(ngx_http_request_t *r)
     return NGX_OK;
 }
 
-size_t
-tunnel_padding_buffer_size(ngx_http_request_t *r)
-{
-    ngx_http_tunnel_srv_conf_t *tscf;
-
-    tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
-
-    return ngx_min(tscf->buffer_size, (size_t)65535) +
-           NGX_HTTP_TUNNEL_PADDING_HEADER_SIZE +
-           NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
-}
-
 ngx_int_t
 tunnel_padding_add_response_header(ngx_http_request_t   *r,
                                    tunnel_padding_ctx_t *padding)

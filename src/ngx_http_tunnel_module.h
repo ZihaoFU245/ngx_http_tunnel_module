@@ -145,7 +145,6 @@ ngx_int_t tunnel_relay_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 
 /* Naive padding */
 ngx_int_t tunnel_padding_needed(ngx_http_request_t *r);
-size_t    tunnel_padding_buffer_size(ngx_http_request_t *r);
 ngx_int_t tunnel_padding_add_response_header(ngx_http_request_t   *r,
                                              tunnel_padding_ctx_t *padding);
 
