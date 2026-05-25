@@ -17,6 +17,7 @@ over HTTP/1.1, HTTP2, and HTTP/3.**
 - [How to build?](#how-to-build)
 - [Example conf file](#example-configuration-file)
 - [Detailed config directives](#config-directives)
+- [Performance Comparison](#performance-comparison)
 
 ## Intro
 
@@ -59,9 +60,9 @@ before submitting it.
 
 - Nginx 1.29.* should all be fine, 1.29.8 is tested.
 
-- Nginx 1.30.0 is tested to work.
+- Nginx 1.30.0 - 1.30.2 is tested to work.
 
-- Nginx 1.31.0 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
+- Nginx 1.31.0 - 1.31.1 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
 
 ## How to build
 
@@ -322,3 +323,19 @@ send header must present `capsule-protocol = ?1`, otherwise 400 rejected.
 
 11. `tunnel_connect_udp_path`: Complex value, MASQUE encode target host and port in path. Default
 to `$request_uri`.
+
+## Performance Comparison
+
+![compare](https://raw.githubusercontent.com/ZihaoFU245/tunnel-benchmark/refs/heads/master/comparison.png)
+
+This compares memory usage (RSS) between Caddy forward proxy and
+this nginx tunnel module.
+
+The test is under 5 rounds of 100 tunnels, each transfer data at 1Mbps,
+total 100 Mbps for 30 seconds with 5 seconds rest interval.
+
+Nginx is more memory efficient and memory growth is more deterministic.
+buffer size is used at 128k, the default value. *Valgrind* shows no
+definitely leak, all memory pools are properly deleted on CONNECT finalize.
+
+[**benchmark tools and more details**](https://github.com/ZihaoFU245/tunnel-benchmark)
