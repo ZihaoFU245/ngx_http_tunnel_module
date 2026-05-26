@@ -82,13 +82,12 @@ tunnel_padding_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
 {
     size_t                n;
     u_char               *p, *last;
-    ngx_buf_t            *dst, *src;
+    ngx_buf_t            *src;
     ngx_chain_t          *cl;
     ngx_http_request_t   *r;
     tunnel_padding_ctx_t *padding;
 
     r = ctx->request;
-    dst = ctx->upstream_buffer;
     padding = ctx->padding;
 
     if (padding->downstream_count >= NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
@@ -143,8 +142,13 @@ tunnel_padding_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
             goto finish;
 
         case PADDING_READ_PAYLOAD:
-            if (dst->last == dst->end) {
-                return NGX_OK;
+            if (padding->payload_size == 0) {
+                if (padding->padding_size != 0) {
+                    padding->read_state = PADDING_READ_DISCARD;
+                    continue;
+                }
+
+                goto finish;
             }
 
             cl = padding_next_chain(ctx->downstream_in);
@@ -152,28 +156,9 @@ tunnel_padding_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
                 goto incomplete;
             }
 
-            src = cl->buf;
-            n = ngx_min((size_t)ngx_buf_size(src), padding->payload_size);
-            n = ngx_min(n, (size_t)(dst->end - dst->last));
-            if (n == 0) {
-                return *activity ? NGX_OK : NGX_AGAIN;
-            }
-
-            dst->last = ngx_cpymem(dst->last, src->pos, n);
-            src->pos += n;
-            padding->payload_size -= n;
-            *activity = 1;
-
-            if (padding->payload_size != 0) {
-                return NGX_OK;
-            }
-
-            if (padding->padding_size != 0) {
-                padding->read_state = PADDING_READ_DISCARD;
-                continue;
-            }
-
-            goto finish;
+            ctx->flush_size = padding->payload_size;
+            padding->payload_size = 0;
+            return NGX_OK;
 
         case PADDING_READ_DISCARD:
             cl = padding_next_chain(ctx->downstream_in);
@@ -235,13 +220,7 @@ incomplete:
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    /*
-     * Incomplete happens when downstream payload are partially arrived,
-     * any progress made are indicated by `activity`, return OK to flush
-     * decoded bytes. If no progress, return AGAIN so caller can early return
-     * without sending anything.
-     */
-    return *activity ? NGX_OK : NGX_AGAIN;
+    return NGX_AGAIN;
 }
 
 ngx_int_t
@@ -256,10 +235,11 @@ tunnel_padding_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (padding->upstream_count >= NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
         ctx->upstream_filter = NULL;
+        ctx->buffer_tail_reserve = 0;
         return NGX_DECLINED;
     }
 
-    b = ctx->client_buffer;
+    b = ctx->buffer;
 
     payload_size = b->last - b->pos;
     if (payload_size == 0) {
@@ -302,6 +282,7 @@ tunnel_padding_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     padding->upstream_count++;
     if (padding->upstream_count >= NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
         ctx->upstream_filter = NULL;
+        ctx->buffer_tail_reserve = 0;
     }
 
     return NGX_OK;
@@ -435,7 +416,7 @@ tunnel_padding_h2_prepend_rst_stream_data(ngx_http_tunnel_ctx_t *ctx)
     r = ctx->request;
 
     if (r->http_version != NGX_HTTP_VERSION_20 || r->stream == NULL ||
-        !ctx->connected) {
+        !r->header_sent) {
         return;
     }
 

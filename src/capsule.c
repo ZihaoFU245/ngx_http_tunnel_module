@@ -8,18 +8,30 @@
 
 #include "ngx_http_tunnel_module.h"
 
+#define capsule_reset(capsule)                                                 \
+    do {                                                                       \
+        (capsule)->capsule_len = 0;                                            \
+        (capsule)->payload_size = 0;                                           \
+        (capsule)->read_state = CAPSULE_READ_TYPE;                             \
+    } while (0)
+
 static ngx_int_t capsule_encode_varint(u_char **pos, u_char *last,
                                        uint64_t value);
+static ngx_int_t capsule_read_varint(ngx_http_tunnel_ctx_t *ctx,
+                                     uint64_t *value, size_t *encoded);
+static ngx_int_t capsule_prepare_datagram(ngx_http_tunnel_ctx_t *ctx,
+                                          size_t payload_size);
 static ngx_int_t capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos,
                                            uint64_t *value, size_t *encoded);
-static ngx_int_t capsule_chain_peek(ngx_chain_t *chain, u_char *pos,
-                                    u_char *value);
-static ngx_int_t capsule_chain_have(ngx_chain_t *chain, u_char *pos,
-                                    uint64_t len);
 static void capsule_chain_advance(ngx_chain_t **chain, u_char **pos, size_t n);
-static void capsule_chain_copy(ngx_chain_t **chain, u_char **pos,
-                               ngx_buf_t *dst, size_t n);
 static ngx_int_t capsule_is_protocol_header(ngx_table_elt_t *header);
+
+enum {
+    CAPSULE_READ_TYPE = 0,
+    CAPSULE_READ_LENGTH,
+    CAPSULE_READ_CONTEXT,
+    CAPSULE_READ_PAYLOAD
+};
 
 ngx_int_t
 tunnel_capsule_is_header_present(ngx_http_request_t *r)
@@ -90,113 +102,102 @@ ngx_int_t
 tunnel_capsule_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
                                  ngx_uint_t            *activity)
 {
-    u_char             *p, context_first;
-    size_t              context_len, header_len, len_len, payload_len, type_len;
-    ngx_chain_t        *cl, *commit;
-    ngx_buf_t          *dst;
-    ngx_http_request_t *r;
-    uint64_t            type, capsule_len, context_id;
+    size_t                encoded;
+    ngx_int_t             rc;
+    ngx_http_request_t   *r;
+    uint64_t              value;
+    tunnel_capsule_ctx_t *capsule;
 
     r = ctx->request;
-    dst = ctx->upstream_buffer;
+    capsule = ctx->capsule;
 
-    cl = ctx->downstream_in;
-    if (cl == NULL) {
-        return NGX_AGAIN;
+    if (capsule == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    p = cl->buf->pos;
+    for (;;) {
+        switch (capsule->read_state) {
 
-    if (capsule_chain_read_varint(&cl, &p, &type, &type_len) != NGX_OK) {
-        if (ctx->downstream_eof) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "CONNECT-UDP request ended with incomplete capsule");
+        case CAPSULE_READ_TYPE:
+            if (capsule_read_varint(ctx, &value, NULL) != NGX_OK) {
+                goto incomplete;
+            }
+
+            if (value != CAPSULE_DATAGRAM) {
+                goto invalid;
+            }
+
+            capsule->read_state = CAPSULE_READ_LENGTH;
+            *activity = 1;
+            continue;
+
+        case CAPSULE_READ_LENGTH:
+            if (capsule_read_varint(ctx, &capsule->capsule_len, NULL) !=
+                NGX_OK) {
+                goto incomplete;
+            }
+
+            capsule->read_state = CAPSULE_READ_CONTEXT;
+            *activity = 1;
+            continue;
+
+        case CAPSULE_READ_CONTEXT:
+            if (capsule_read_varint(ctx, &value, &encoded) != NGX_OK) {
+                goto incomplete;
+            }
+
+            if (value != CAPSULE_DATAGRAM_CONTEXT_ID ||
+                capsule->capsule_len < encoded) {
+                goto invalid;
+            }
+
+            capsule->payload_size = capsule->capsule_len - encoded;
+            capsule->read_state = CAPSULE_READ_PAYLOAD;
+            *activity = 1;
+
+            if (capsule->payload_size == 0) {
+                capsule_reset(capsule);
+                return NGX_OK;
+            }
+
+            continue;
+
+        case CAPSULE_READ_PAYLOAD:
+            if (ctx->downstream_in == NULL) {
+                goto incomplete;
+            }
+
+            if (capsule->payload_size > NGX_MAX_SIZE_T_VALUE) {
+                goto invalid;
+            }
+
+            rc = capsule_prepare_datagram(ctx, (size_t)capsule->payload_size);
+            if (rc == NGX_AGAIN) {
+                goto incomplete;
+            }
+            if (rc != NGX_OK) {
+                return rc;
+            }
+
+            ctx->flush_size = (size_t)capsule->payload_size;
+            capsule_reset(capsule);
+            *activity = 1;
+            return NGX_OK;
+
+        default:
             return NGX_HTTP_BAD_REQUEST;
         }
-
-        return NGX_AGAIN;
     }
 
-    if (capsule_chain_read_varint(&cl, &p, &capsule_len, &len_len) != NGX_OK) {
-        if (ctx->downstream_eof) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "CONNECT-UDP request ended with incomplete capsule");
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        return NGX_AGAIN;
-    }
-
-    if (type != CAPSULE_DATAGRAM) {
-        goto invalid;
-    }
-
-    if (capsule_chain_peek(cl, p, &context_first) != NGX_OK) {
-        if (ctx->downstream_eof) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "CONNECT-UDP request ended with incomplete capsule");
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        return NGX_AGAIN;
-    }
-
-    context_len = (size_t)1 << (context_first >> 6);
-    if (capsule_len < context_len) {
-        goto invalid;
-    }
-
-    if (capsule_chain_read_varint(&cl, &p, &context_id, &context_len) !=
-        NGX_OK) {
-        if (ctx->downstream_eof) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "CONNECT-UDP request ended with incomplete capsule");
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        return NGX_AGAIN;
-    }
-
-    if (context_id != CAPSULE_DATAGRAM_CONTEXT_ID) {
-        goto invalid;
-    }
-
-    if (capsule_len < context_len) {
-        goto invalid;
-    }
-
-    payload_len = (size_t)(capsule_len - context_len);
-    header_len = type_len + len_len + context_len;
-
-    if ((size_t)(dst->end - dst->start) < payload_len) {
+incomplete:
+    if (ctx->downstream_eof && (capsule->read_state != CAPSULE_READ_TYPE ||
+                                ctx->downstream_in != NULL)) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                      "CONNECT-UDP datagram capsule too large");
+                      "CONNECT-UDP request ended with incomplete capsule");
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    if (capsule_chain_have(cl, p, payload_len) != NGX_OK) {
-        if (ctx->downstream_eof) {
-            ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "CONNECT-UDP request ended with incomplete capsule");
-            return NGX_HTTP_BAD_REQUEST;
-        }
-
-        return NGX_AGAIN;
-    }
-
-    if ((size_t)(dst->end - dst->last) < payload_len) {
-        return NGX_AGAIN;
-    }
-
-    commit = ctx->downstream_in;
-    p = commit->buf->pos;
-    capsule_chain_advance(&commit, &p, header_len);
-    capsule_chain_copy(&commit, &p, dst, payload_len);
-    ctx->downstream_in = commit;
-    tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
-    *activity = 1;
-
-    return NGX_OK;
+    return NGX_AGAIN;
 
 invalid:
     ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
@@ -212,7 +213,7 @@ tunnel_capsule_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     size_t              capsule_len, context_len, header_len, payload_len;
     ngx_buf_t          *b, *hb;
 
-    b = ctx->client_buffer;
+    b = ctx->buffer;
 
     payload_len = (size_t)(b->last - b->pos);
     if (payload_len == 0) {
@@ -251,6 +252,72 @@ tunnel_capsule_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     hb->last = p;
 
     return NGX_OK;
+}
+
+static ngx_int_t
+capsule_prepare_datagram(ngx_http_tunnel_ctx_t *ctx, size_t payload_size)
+{
+    size_t              remaining;
+    size_t              size;
+    u_char             *split;
+    ngx_buf_t          *b;
+    ngx_buf_t          *tail;
+    ngx_chain_t        *cl;
+    ngx_chain_t        *next;
+    ngx_http_request_t *r;
+
+    r = ctx->request;
+    remaining = payload_size;
+
+    for (cl = ctx->downstream_in; cl != NULL; cl = cl->next) {
+        b = cl->buf;
+        size = ngx_buf_size(b);
+
+        if (size == 0) {
+            continue;
+        }
+
+        if (remaining > size) {
+            remaining -= size;
+            continue;
+        }
+
+        /*
+         * UDP send_chain forms one datagram up to a flush buffer.  When the
+         * capsule payload ends inside a buffer, split the tail into the next
+         * chain link so relay does not need to rediscover this boundary.
+         */
+        if (remaining < size) {
+            next = ngx_alloc_chain_link(r->pool);
+            if (next == NULL) {
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+
+            tail = ngx_calloc_buf(r->pool);
+            if (tail == NULL) {
+                ngx_free_chain(r->pool, next);
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+
+            split = b->pos + remaining;
+            *tail = *b;
+            tail->pos = split;
+            tail->flush = 0;
+
+            next->buf = tail;
+            next->next = cl->next;
+            cl->next = next;
+
+            b->last = split;
+            b->last_buf = 0;
+            b->last_in_chain = 0;
+        }
+
+        b->flush = 1;
+        return NGX_OK;
+    }
+
+    return NGX_AGAIN;
 }
 
 /*
@@ -308,6 +375,40 @@ capsule_encode_varint(u_char **pos, u_char *last, uint64_t value)
     }
 
     *pos = p + len;
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+capsule_read_varint(ngx_http_tunnel_ctx_t *ctx, uint64_t *value,
+                    size_t *encoded)
+{
+    ngx_int_t    rc;
+    u_char      *p;
+    size_t       n;
+    ngx_chain_t *cl;
+
+    if (ctx->downstream_in == NULL) {
+        return NGX_AGAIN;
+    }
+
+    cl = ctx->downstream_in;
+    p = cl->buf->pos;
+
+    rc = capsule_chain_read_varint(&cl, &p, value, &n);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    cl = ctx->downstream_in;
+    p = cl->buf->pos;
+    capsule_chain_advance(&cl, &p, n);
+    ctx->downstream_in = cl;
+    tunnel_utils_free_consumed_chain(ctx->request, &ctx->downstream_in, NULL);
+
+    if (encoded != NULL) {
+        *encoded = n;
+    }
 
     return NGX_OK;
 }
@@ -378,58 +479,6 @@ capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos, uint64_t *value,
     return NGX_OK;
 }
 
-static ngx_int_t
-capsule_chain_have(ngx_chain_t *chain, u_char *pos, uint64_t len)
-{
-    size_t n;
-
-    while (len != 0) {
-        if (chain == NULL) {
-            return NGX_AGAIN;
-        }
-
-        if (pos == NULL || pos == chain->buf->last) {
-            chain = chain->next;
-            pos = chain == NULL ? NULL : chain->buf->pos;
-            continue;
-        }
-
-        n = chain->buf->last - pos;
-        if ((uint64_t)n >= len) {
-            return NGX_OK;
-        }
-
-        len -= n;
-        chain = chain->next;
-        pos = chain == NULL ? NULL : chain->buf->pos;
-    }
-
-    return NGX_OK;
-}
-
-static ngx_int_t
-capsule_chain_peek(ngx_chain_t *chain, u_char *pos, u_char *value)
-{
-    if (value == NULL) {
-        return NGX_ERROR;
-    }
-
-    for (;;) {
-        if (chain == NULL) {
-            return NGX_AGAIN;
-        }
-
-        if (pos == NULL || pos == chain->buf->last) {
-            chain = chain->next;
-            pos = chain == NULL ? NULL : chain->buf->pos;
-            continue;
-        }
-
-        *value = *pos;
-        return NGX_OK;
-    }
-}
-
 static void
 capsule_chain_advance(ngx_chain_t **chain, u_char **pos, size_t n)
 {
@@ -456,39 +505,6 @@ capsule_chain_advance(ngx_chain_t **chain, u_char **pos, size_t n)
     while (cl != NULL && (p == NULL || p == cl->buf->last)) {
         cl = cl->next;
         p = cl == NULL ? NULL : cl->buf->pos;
-    }
-
-    *chain = cl;
-    *pos = p;
-}
-
-static void
-capsule_chain_copy(ngx_chain_t **chain, u_char **pos, ngx_buf_t *dst, size_t n)
-{
-    size_t       size;
-    ngx_chain_t *cl;
-    u_char      *p;
-
-    cl = *chain;
-    p = *pos;
-
-    while (n != 0 && cl != NULL) {
-        if (p == NULL || p == cl->buf->last) {
-            cl = cl->next;
-            p = cl == NULL ? NULL : cl->buf->pos;
-            continue;
-        }
-
-        size = ngx_min(n, (size_t)(cl->buf->last - p));
-        dst->last = ngx_cpymem(dst->last, p, size);
-        p += size;
-        cl->buf->pos = p;
-        n -= size;
-
-        if (p == cl->buf->last) {
-            cl = cl->next;
-            p = cl == NULL ? NULL : cl->buf->pos;
-        }
     }
 
     *chain = cl;

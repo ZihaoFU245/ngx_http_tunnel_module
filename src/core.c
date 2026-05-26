@@ -165,7 +165,6 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
 {
     ngx_int_t                   rc;
     ngx_int_t                   padding_needed;
-    size_t                      upstream_buffer_size;
     ngx_http_tunnel_ctx_t      *ctx;
     ngx_http_tunnel_srv_conf_t *tscf;
     ngx_http_upstream_t        *u;
@@ -199,20 +198,8 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     padding_needed = (r->connect_protocol.len == 0) ? tunnel_padding_needed(r)
                                                     : NGX_DECLINED;
 
-    /* send_upstream calls pc->send_chain(pc, cl, 0) if no filters,
-     it does not require a buffer to send at all. */
-    upstream_buffer_size =
-        (r->connect_protocol.len != 0 || padding_needed == NGX_OK)
-            ? tscf->buffer_size
-            : 1;
-
-    ctx->client_buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
-    if (ctx->client_buffer == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
-    ctx->upstream_buffer = ngx_create_temp_buf(r->pool, upstream_buffer_size);
-    if (ctx->upstream_buffer == NULL) {
+    ctx->buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
+    if (ctx->buffer == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -241,6 +228,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
 
+        ctx->buffer_tail_reserve = NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
         ctx->downstream_filter = tunnel_padding_downstream_filter;
         ctx->upstream_filter = tunnel_padding_upstream_filter;
     }
@@ -334,11 +322,11 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_value(conf->enable, prev->enable, 0);
     ngx_conf_merge_ptr_value(conf->proxy_auth_user_file,
                              prev->proxy_auth_user_file, NULL);
-    ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size, 128 * 1024);
+    ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size, 64 * 1024);
 
-    if (conf->buffer_size < 64 * 1024) {
+    if (conf->buffer_size < 1024) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           "\"tunnel_buffer_size\" must be at least 64k");
+                           "\"tunnel_connect_buffer_size\" must be at least 1k");
         return NGX_CONF_ERROR;
     }
     ngx_conf_merge_msec_value(conf->connect_timeout, prev->connect_timeout,

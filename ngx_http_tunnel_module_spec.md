@@ -108,7 +108,7 @@ server {
 	tunnel_pass;
 	tunnel_proxy_auth_user_file htpasswd;
 
-	tunnel_buffer_size 128k;
+	tunnel_connect_buffer_size 64k;
 	tunnel_connect_timeout 60s;
 	tunnel_idle_timeout 30s;
 	tunnel_probe_resistance off;
@@ -134,7 +134,7 @@ server {
 	tunnel_proxy_auth_user_file htpasswd;
 	tunnel_padding on;
 
-	tunnel_buffer_size 128k;
+	tunnel_connect_buffer_size 64k;
 	tunnel_connect_timeout 60s;
 	tunnel_idle_timeout 30s;
 	tunnel_probe_resistance off;
@@ -287,12 +287,12 @@ requests.
 
 ---
 
-### 6.4 `tunnel_buffer_size`
+### 6.4 `tunnel_connect_buffer_size`
 
 #### Syntax
 
 ```nginx
-tunnel_buffer_size <size>;
+tunnel_connect_buffer_size <size>;
 ```
 
 #### Context
@@ -306,14 +306,14 @@ Size of relay buffer used for copying bytes between client and upstream.
 #### Default
 
 ```nginx
-tunnel_buffer_size 128k;
+tunnel_connect_buffer_size 64k;
 ```
 
 #### Notes
 
-- This is an nginx size value such as `4k`, `16k`, `64k`, `1m`.
-- `128k` means 128 KiB, not 128 MB.
-- Values below `64k` are rejected during configuration merge.
+- This is an nginx size value such as `1k`, `4k`, `16k`, `64k`, `1m`.
+- `64k` means 64 KiB, not 64 MB.
+- Values below `1k` are rejected during configuration merge.
 - When padding is active, the `original_data_size` field in `PaddedData` is two bytes, limiting a single padded message to 65535 bytes. If the relay buffer exceeds this, the implementation must split the payload across multiple `PaddedData` frames before writing.
 
 ---
@@ -871,8 +871,9 @@ and nginx output filtering for upstream-to-downstream DATA.
 Downstream DATA is decoded as HTTP Capsule Protocol frames. The implementation
 accepts only DATAGRAM capsules with `Context ID = 0`; each accepted DATAGRAM
 capsule becomes one UDP send to the connected upstream socket. Unsupported
-capsule types, non-zero context IDs, incomplete final capsules, and datagrams
-larger than the relay buffer are rejected as malformed requests.
+capsule types, non-zero context IDs, and incomplete final capsules are rejected
+as malformed requests. DATAGRAM payloads are parsed incrementally and are not
+limited by the relay buffer size.
 
 Each UDP datagram received from upstream is encoded as one DATAGRAM capsule with
 `Context ID = 0` and written downstream as HTTP DATA. The relay reserves capsule

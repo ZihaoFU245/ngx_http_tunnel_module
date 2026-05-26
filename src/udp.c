@@ -64,6 +64,11 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ctx->downstream_filter = tunnel_capsule_downstream_filter;
     ctx->upstream_filter = tunnel_capsule_upstream_filter;
 
+    ctx->capsule = ngx_pcalloc(r->pool, sizeof(tunnel_capsule_ctx_t));
+    if (ctx->capsule == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
     u = r->upstream;
     u->peer.type = SOCK_DGRAM;
     u->conf = &tscf->upstream;
@@ -100,7 +105,7 @@ tunnel_udp_process_header(ngx_http_request_t *r)
     }
 
     h->hash = 1;
-    ngx_str_set(&h->key, "Capsule-Protocol");
+    ngx_str_set(&h->key, "capsule-protocol");
     ngx_str_set(&h->value, "?1");
 
     u->headers_in.status_n = NGX_HTTP_OK;

@@ -236,7 +236,7 @@ http {
 		ssl_certificate_key privkey.pem;
 
 		tunnel_connect;                        	# Enable tunnel module
-		tunnel_connect_buffer_size 128k;        # Buffer size for tunnel relay 
+		tunnel_connect_buffer_size 64k;         # Buffer size for tunnel relay 
 
 		# NGINX 1.30 AND OLDER ONLY
 		tunnel_connect_proxy_auth_user_file /path/to/.htaccess;
@@ -297,7 +297,7 @@ http {
 1. `tunnel_connect_pass`: Enable tunnel module, allow HTTP connect.
 
 2. `tunnel_connect_buffer_size`: Size, a symmetric buffer size for tunnel module,
-for upstream buffer and client buffer. Default to 128k, with minimum 64k.
+for upstream buffer and client buffer. Default to 64k, with minimum 1k.
 
 3. `tunnel_connect_proxy_auth_user_file`: path to .htaccess file. This will only support
 nginx version 1.30 and below.
@@ -335,7 +335,7 @@ The test is under 5 rounds of 100 tunnels, each transfer data at 1Mbps,
 total 100 Mbps for 30 seconds with 5 seconds rest interval.
 
 Nginx is more memory efficient and memory growth is more deterministic.
-buffer size is used at 128k, the default value. *Valgrind* shows no
+buffer size is used at 64k, the default value. *Valgrind* shows no
 definitely leak, all memory pools are properly deleted on CONNECT finalize.
 
 [**benchmark tools and more details**](https://github.com/ZihaoFU245/tunnel-benchmark)

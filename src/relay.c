@@ -88,18 +88,13 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     r->write_event_handler = tunnel_relay_downstream_write_handler;
     pc->data = ctx;
 
-    if (!ctx->cleanup_added) {
-        cln = ngx_http_cleanup_add(r, 0);
-        if (cln == NULL) {
-            return NGX_ERROR;
-        }
-
-        cln->handler = tunnel_relay_cleanup;
-        cln->data = ctx;
-        ctx->cleanup_added = 1;
+    cln = ngx_http_cleanup_add(r, 0);
+    if (cln == NULL) {
+        return NGX_ERROR;
     }
 
-    ctx->connected = 1;
+    cln->handler = tunnel_relay_cleanup;
+    cln->data = ctx;
 
     tunnel_utils_update_idle_timer(pc->write, tscf->idle_timeout);
     tunnel_utils_update_idle_timer(pc->read, tscf->idle_timeout);
@@ -358,11 +353,16 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         ctx->read_again_event_posted = 0;
     }
 
-    if (!ctx->read_again_event_posted &&
-        ((datagram &&
-          ctx->upstream_buffer->pos == ctx->upstream_buffer->last) ||
-         (!datagram && upload_drained)) &&
-        r->reading_body && !ctx->downstream_eof && !pc->read->eof) {
+    /*
+     * Re-post downstream reads only after an idle relay pass.  If this pass
+     * already made progress, the next loop iteration/event can consume it
+     * without spinning through posted reads.
+     */
+    if (!activity && !ctx->read_again_event_posted &&
+        /* Is downstream drained */
+        (datagram ? (ctx->downstream_in == NULL) : upload_drained) &&
+        /* Is downstream read ready */
+        (r->reading_body && !ctx->downstream_eof && !pc->read->eof)) {
         tunnel_relay_post_downstream_read(ctx);
     }
 
@@ -496,27 +496,16 @@ static ngx_int_t
 recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     ngx_int_t           rc;
-    ngx_uint_t          datagram;
     ngx_chain_t        *cl;
     ngx_http_request_t *r;
 
     r = ctx->request;
-    datagram = (r->upstream->peer.connection->type == SOCK_DGRAM);
 
     if (ctx->downstream_eof) {
         return NGX_OK;
     }
 
     if (ctx->downstream_in != NULL && ctx->downstream_filter == NULL) {
-        return NGX_OK;
-    }
-
-    if (ctx->downstream_in != NULL &&
-        ctx->upstream_buffer->pos != ctx->upstream_buffer->last) {
-        return NGX_OK;
-    }
-
-    if (datagram && ctx->upstream_buffer->pos != ctx->upstream_buffer->last) {
         return NGX_OK;
     }
 
@@ -570,10 +559,7 @@ static ngx_int_t
 send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     off_t               before_sent;
-    ssize_t             n;
-    size_t              size;
-    u_char             *before_pos;
-    ngx_buf_t          *b;
+    off_t               sent;
     ngx_chain_t        *cl, *out;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
@@ -581,91 +567,62 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    b = ctx->upstream_buffer;
 
     tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
 
-    if (b->pos == b->last) {
-        b->pos = b->start;
-        b->last = b->start;
+    if (ctx->flush_size != 0 && ctx->downstream_filter == NULL) {
+        ctx->flush_size = 0;
+    }
 
-        /*
-         * Call custom filters. filters are used to transform data
-         * for padding/capsule purpose.
-         */
-        if (ctx->downstream_filter != NULL && ctx->downstream_in != NULL) {
-            rc = ctx->downstream_filter(ctx, activity);
-            if (rc == NGX_AGAIN) {
-                return NGX_OK;
-            }
-            if (rc != NGX_OK) {
-                return rc;
-            }
+    /*
+     * A non-zero flush_size means a previous filter-selected payload has not
+     * finished sending yet.
+     */
+    if (ctx->flush_size == 0 && ctx->downstream_filter != NULL) {
+        rc = ctx->downstream_filter(ctx, activity);
+        if (rc == NGX_AGAIN) {
+            return NGX_OK;
+        }
+        if (rc != NGX_OK) {
+            return rc;
         }
 
-        if (ctx->downstream_filter == NULL && ctx->downstream_in != NULL &&
-            b->pos == b->last) {
-            if (!pc->write->ready) {
-                return NGX_OK;
-            }
-
-            cl = ctx->downstream_in;
-            before_sent = pc->sent;
-            before_pos = cl->buf->pos;
-
-            /*
-             * If no filter transforming data, send downstream_in directly
-             * without copy
-             */
-            out = pc->send_chain(pc, cl, 0);
-            if (out == NGX_CHAIN_ERROR) {
-                pc->write->error = 1;
-                return NGX_DONE;
-            }
-
-            if (pc->sent != before_sent || out != cl ||
-                cl->buf->pos != before_pos) {
-                *activity = 1;
-            }
-
-            tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, out);
-            ctx->downstream_in = out;
-
+        if (ctx->downstream_filter != NULL && ctx->flush_size == 0) {
             return NGX_OK;
         }
     }
 
-    if (!pc->write->ready || b->pos == b->last) {
+    if (ctx->downstream_in == NULL && ctx->flush_size != 0 &&
+        ctx->downstream_eof) {
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
+    if (ctx->downstream_in == NULL || !pc->write->ready) {
         return NGX_OK;
     }
 
-    size = b->last - b->pos;
-    n = pc->send(pc, b->pos, size);
+    cl = ctx->downstream_in;
+    before_sent = pc->sent;
 
-    if (n == NGX_AGAIN) {
-        return NGX_OK;
-    }
+    /*
+     * Stream send_chain honors the byte limit directly.  UDP send_chain uses
+     * buf->flush as the datagram boundary; capsule filter sets that boundary
+     * when it publishes a non-zero flush_size.
+     */
+    out = pc->send_chain(pc, cl, (off_t)ctx->flush_size);
 
-    if (n == NGX_ERROR) {
+    if (out == NGX_CHAIN_ERROR) {
         pc->write->error = 1;
         return NGX_DONE;
     }
 
-    if (pc->type == SOCK_DGRAM && n != (ssize_t)size) {
-        pc->write->error = 1;
-        return NGX_DONE;
+    sent = pc->sent - before_sent;
+    if (ctx->flush_size != 0 && sent != 0) {
+        ctx->flush_size -= (size_t)sent;
     }
 
-    if (n > 0) {
-        b->pos += n;
-        *activity = 1;
-
-        if (b->pos == b->last) {
-            b->pos = b->start;
-            b->last = b->start;
-            tunnel_utils_free_consumed_chain(r, &ctx->downstream_in, NULL);
-        }
-    }
+    *activity = 1;
+    ctx->downstream_in = out;
 
     return NGX_OK;
 }
@@ -681,7 +638,7 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    b = ctx->client_buffer;
+    b = ctx->buffer;
 
     if (pc == NULL || !pc->read->ready || b->pos != b->last ||
         !downstream_output_idle(r, r->connection)) {
@@ -692,14 +649,13 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     b->last = b->start;
     size = b->end - b->last;
 
-    if (tunnel_padding_active(ctx->padding) == NGX_OK &&
-        ctx->padding->upstream_count < NGX_HTTP_TUNNEL_K_FIRST_PADDINGS) {
-        if (size <= NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
+    if (ctx->buffer_tail_reserve != 0) {
+        if (size <= ctx->buffer_tail_reserve) {
             b->last = b->start;
             return NGX_OK;
         }
 
-        size -= NGX_HTTP_TUNNEL_MAX_PADDING_SIZE;
+        size -= ctx->buffer_tail_reserve;
         size = ngx_min(size, (size_t)65535);
     }
 
@@ -757,7 +713,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     c = r->connection;
-    b = ctx->client_buffer;
+    b = ctx->buffer;
 
     if (b->pos == b->last && downstream_output_idle(r, c)) {
         return NGX_OK;
@@ -779,14 +735,14 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         /*
          * Call upstream filters, upstream filters are used to
          * transform data for padding / capsules.
-         * Data is read directly into client_buffer, so we reserve
+         * Data is read directly into buffer, so we reserve
          * a 32 bytes field for storing additional headers.
          * downstream_out->buf must never be mutated. It always
          * points to the 32 bytes fixed buffer.
          */
         if (ctx->upstream_filter != NULL) {
             rc = ctx->upstream_filter(ctx, activity);
-            if (rc == NGX_AGAIN) {
+            if (rc == NGX_AGAIN || rc == NGX_DONE) {
                 return NGX_OK;
             }
             if (rc == NGX_OK) {
@@ -876,10 +832,9 @@ is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
 {
     ngx_uint_t download_drained;
 
-    *upload_drained = (ctx->downstream_in == NULL &&
-                       ctx->upstream_buffer->pos == ctx->upstream_buffer->last);
+    *upload_drained = (ctx->downstream_in == NULL && ctx->flush_size == 0);
 
-    download_drained = (ctx->client_buffer->pos == ctx->client_buffer->last &&
+    download_drained = (ctx->buffer->pos == ctx->buffer->last &&
                         downstream_output_idle(r, c));
 
     return (pc->read->eof && *upload_drained && download_drained);

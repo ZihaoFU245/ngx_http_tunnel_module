@@ -21,6 +21,11 @@
 
 typedef struct ngx_http_tunnel_ctx_s ngx_http_tunnel_ctx_t;
 
+/*
+ * Relay filter rc:
+ *   NGX_OK:    filter produced bytes, but the send stage still needs to run.
+ *   NGX_AGAIN: filter needs more input or output space before it can proceed.
+ */
 typedef ngx_int_t (*tunnel_relay_downstream_filter_pt)(
     ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity);
 typedef ngx_int_t (*tunnel_relay_upstream_filter_pt)(
@@ -64,19 +69,25 @@ typedef struct {
     unsigned                            read_state : 3;
 } tunnel_padding_ctx_t;
 
+typedef struct {
+    uint64_t                            capsule_len;
+    uint64_t                            payload_size;
+    unsigned                            read_state : 3;
+} tunnel_capsule_ctx_t;
+
 struct ngx_http_tunnel_ctx_s {
     ngx_http_request_t                  *request;
-    ngx_buf_t                           *client_buffer;
-    ngx_buf_t                           *upstream_buffer;
+    ngx_buf_t                           *buffer;
     ngx_chain_t                         *downstream_in; /* r->request_body->bufs */
     ngx_chain_t                         downstream_out; /* Only for header bytes */
+    size_t                              flush_size;
+    size_t                              buffer_tail_reserve;
     ngx_http_upstream_resolved_t        *resolved;
     tunnel_padding_ctx_t                *padding;
+    tunnel_capsule_ctx_t                *capsule;
     tunnel_relay_downstream_filter_pt   downstream_filter;
     tunnel_relay_upstream_filter_pt     upstream_filter;
     unsigned                            finalized : 1;
-    unsigned                            connected : 1;
-    unsigned                            cleanup_added : 1;
     unsigned                            content_handler_ref : 1;
     unsigned                            downstream_eof : 1;
     unsigned                            upstream_write_closed : 1;
