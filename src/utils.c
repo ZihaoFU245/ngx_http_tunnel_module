@@ -6,36 +6,36 @@
 #include "ngx_http_tunnel_module.h"
 
 static tunnel_extended_connect_regex_t tunnel_extended_connect_regexes[] = {
-	{
-		ngx_string("^/\\.well-known/masque/udp/([^/?#]+)/([0-9]{1,5})/(?:[?#].*)?$"),
-		NULL,
-		1,
-		2
-	},
-	{
-		ngx_string("(?:^|[?&])h=([^&#]+)(?:&[^#]*)*&p=([0-9]{1,5})(?:[&#]|$)"),
-		NULL,
-		1,
-		2
-	},
-	{
-		ngx_string("(?:^|[?&])p=([0-9]{1,5})(?:&[^#]*)*&h=([^&#]+)(?:[&#]|$)"),
-		NULL,
-		2,
-		1
-	},
-	{
-		ngx_string("(?:^|[?&])target_host=([^&#]+)(?:&[^#]*)*&target_port=([0-9]{1,5})(?:[&#]|$)"),
-		NULL,
-		1,
-		2
-	},
-	{
-		ngx_string("(?:^|[?&])target_port=([0-9]{1,5})(?:&[^#]*)*&target_host=([^&#]+)(?:[&#]|$)"),
-		NULL,
-		2,
-		1
-	}
+    {
+        ngx_string("^/\\.well-known/masque/udp/([^/?#]+)/([0-9]{1,5})/(?:[?#].*)?$"),
+        NULL,
+        1,
+        2
+    },
+    {
+        ngx_string("(?:^|[?&])h=([^&#]+)(?:&[^#]*)*&p=([0-9]{1,5})(?:[&#]|$)"),
+        NULL,
+        1,
+        2
+    },
+    {
+        ngx_string("(?:^|[?&])p=([0-9]{1,5})(?:&[^#]*)*&h=([^&#]+)(?:[&#]|$)"),
+        NULL,
+        2,
+        1
+    },
+    {
+        ngx_string("(?:^|[?&])target_host=([^&#]+)(?:&[^#]*)*&target_port=([0-9]{1,5})(?:[&#]|$)"),
+        NULL,
+        1,
+        2
+    },
+    {
+        ngx_string("(?:^|[?&])target_port=([0-9]{1,5})(?:&[^#]*)*&target_host=([^&#]+)(?:[&#]|$)"),
+        NULL,
+        2,
+        1
+    }
 };
 
 ngx_int_t
@@ -192,38 +192,3 @@ tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
     }
 }
 
-ngx_uint_t
-tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r, ngx_chain_t **chain,
-                                  ngx_buf_t *b, size_t limit)
-{
-    size_t       n;
-    size_t       size;
-    ngx_uint_t   copied;
-    ngx_buf_t   *src;
-    ngx_chain_t *cl;
-
-    copied = 0;
-
-    for (;;) {
-        tunnel_utils_free_consumed_chain(r, chain, NULL);
-
-        cl = *chain;
-        if (cl == NULL || b->last == b->end || limit == 0) {
-            return copied;
-        }
-
-        src = cl->buf;
-        size = b->end - b->last;
-        n = ngx_min((size_t)ngx_buf_size(src), size);
-        n = ngx_min(n, limit);
-
-        if (n == 0) {
-            return copied;
-        }
-
-        b->last = ngx_cpymem(b->last, src->pos, n);
-        src->pos += n;
-        limit -= n;
-        copied = 1;
-    }
-}

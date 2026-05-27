@@ -7,26 +7,23 @@
 #include "ngx_http_tunnel_module.h"
 
 #define NGX_HTTP_RELAY_MAX_ITERATIONS 64
-#define RELAY_CHECK_PERIOD 8
 
-static void                  request_body_post_handler(ngx_http_request_t *r);
-static ngx_int_t             recv_downstream(ngx_http_tunnel_ctx_t *ctx,
-                                             ngx_uint_t            *activity);
-static ngx_int_t             send_upstream(ngx_http_tunnel_ctx_t *ctx,
-                                           ngx_uint_t            *activity);
-static ngx_int_t             recv_upstream(ngx_http_tunnel_ctx_t *ctx,
-                                           ngx_uint_t            *activity);
-static ngx_int_t             send_downstream(ngx_http_tunnel_ctx_t *ctx,
-                                             ngx_uint_t            *activity);
-static ngx_int_t             close_upstream_write(ngx_http_tunnel_ctx_t *ctx,
-                                                  ngx_uint_t             upload_drained);
-static ngx_inline ngx_uint_t downstream_output_idle(ngx_http_request_t *r,
-                                                    ngx_connection_t   *c);
-static ngx_inline ngx_uint_t is_relay_finished(ngx_http_tunnel_ctx_t *ctx,
-                                               ngx_http_request_t    *r,
-                                               ngx_connection_t      *c,
-                                               ngx_connection_t      *pc,
-                                               ngx_uint_t *upload_drained);
+#define downstream_output_idle(r)                                              \
+    ((r)->out == NULL && !(r)->buffered && !(r)->connection->buffered)
+
+#define tunnel_upload_drained(ctx)                                             \
+    ((ctx)->downstream_in == NULL && (ctx)->flush_size == 0)
+
+static void      request_body_post_handler(ngx_http_request_t *r);
+static ngx_int_t recv_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                 ngx_uint_t            *activity);
+static ngx_int_t send_upstream(ngx_http_tunnel_ctx_t *ctx,
+                               ngx_uint_t            *activity);
+static ngx_int_t recv_upstream(ngx_http_tunnel_ctx_t *ctx,
+                               ngx_uint_t            *activity);
+static ngx_int_t send_downstream(ngx_http_tunnel_ctx_t *ctx,
+                                 ngx_uint_t            *activity);
+static ngx_int_t close_upstream_write(ngx_http_tunnel_ctx_t *ctx);
 
 ngx_int_t
 tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
@@ -215,7 +212,6 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
 {
     ngx_int_t                   rc;
     ngx_uint_t                  i, flags, activity, datagram, loop_activity;
-    ngx_uint_t                  upload_drained;
     ngx_msec_t                  idle_timeout;
     ngx_connection_t           *c, *pc;
     ngx_http_core_loc_conf_t   *clcf;
@@ -246,13 +242,11 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
     }
 
     activity = 0;
-    upload_drained = 0;
 
     for (i = 0; i < NGX_HTTP_RELAY_MAX_ITERATIONS; i++) {
         loop_activity = 0;
 
-        if ((i % RELAY_CHECK_PERIOD) == 0 &&
-            (ngx_terminate || ngx_quit || ngx_exiting)) {
+        if (ngx_terminate || ngx_quit || ngx_exiting) {
             tunnel_relay_finalize(ctx, NGX_OK);
             return;
         }
@@ -287,16 +281,16 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
             return;
         }
 
-        if (!datagram && is_relay_finished(ctx, r, c, pc, &upload_drained)) {
+        if (!datagram &&
+            /* peer read EOF */
+            pc->read->eof &&
+            /* upload drained */
+            tunnel_upload_drained(ctx) &&
+            /* download drained */
+            ctx->buffer->pos == ctx->buffer->last &&
+            downstream_output_idle(r)) {
             tunnel_relay_finalize(ctx, NGX_OK);
             return;
-        }
-
-        if (!datagram) {
-            rc = close_upstream_write(ctx, upload_drained);
-            if (rc != NGX_OK) {
-                goto failed;
-            }
         }
 
         if (!loop_activity) {
@@ -304,19 +298,14 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
         }
     }
 
-    if (datagram && (c->read->eof || c->write->error || pc->read->error ||
-                     pc->write->error)) {
-        tunnel_relay_finalize(ctx, NGX_OK);
-        return;
-    }
-
-    if (!datagram && is_relay_finished(ctx, r, c, pc, &upload_drained)) {
-        tunnel_relay_finalize(ctx, NGX_OK);
-        return;
-    }
-
+    /*
+     * Half-close the upstream write side once the client has finished
+     * sending and all buffered data has been flushed.  The three guards
+     * inside close_upstream_write make this call a cheap no-op on every
+     * invocation except the one where conditions are first met.
+     */
     if (!datagram) {
-        rc = close_upstream_write(ctx, upload_drained);
+        rc = close_upstream_write(ctx);
         if (rc != NGX_OK) {
             goto failed;
         }
@@ -359,9 +348,9 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
      * without spinning through posted reads.
      */
     if (!activity && !ctx->read_again_event_posted &&
-        /* Is downstream drained */
-        (datagram ? (ctx->downstream_in == NULL) : upload_drained) &&
-        /* Is downstream read ready */
+        /* downstream drained */
+        tunnel_upload_drained(ctx) &&
+        /* downstream read ready */
         (r->reading_body && !ctx->downstream_eof && !pc->read->eof)) {
         tunnel_relay_post_downstream_read(ctx);
     }
@@ -587,6 +576,10 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
             return rc;
         }
 
+        /*
+         * When flush_size is 0, it is owned by filter, this check prevent
+         * leaks.
+         */
         if (ctx->downstream_filter != NULL && ctx->flush_size == 0) {
             return NGX_OK;
         }
@@ -641,7 +634,7 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     b = ctx->buffer;
 
     if (pc == NULL || !pc->read->ready || b->pos != b->last ||
-        !downstream_output_idle(r, r->connection)) {
+        !downstream_output_idle(r)) {
         return NGX_OK;
     }
 
@@ -651,7 +644,6 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (ctx->buffer_tail_reserve != 0) {
         if (size <= ctx->buffer_tail_reserve) {
-            b->last = b->start;
             return NGX_OK;
         }
 
@@ -660,19 +652,16 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (size == 0) {
-        b->last = b->start;
         return NGX_OK;
     }
 
     n = pc->recv(pc, b->last, size);
 
     if (n == NGX_AGAIN) {
-        b->last = b->start;
         return NGX_OK;
     }
 
     if (n == 0) {
-        b->last = b->start;
         if (pc->type == SOCK_DGRAM) {
             return NGX_OK;
         }
@@ -683,7 +672,6 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     }
 
     if (n < 0) {
-        b->last = b->start;
         pc->read->eof = 1;
         pc->read->error = 1;
         pc->read->ready = 0;
@@ -715,7 +703,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     c = r->connection;
     b = ctx->buffer;
 
-    if (b->pos == b->last && downstream_output_idle(r, c)) {
+    if (b->pos == b->last && downstream_output_idle(r)) {
         return NGX_OK;
     }
 
@@ -725,7 +713,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     before_r_buffered = r->buffered;
     before_c_buffered = c->buffered;
 
-    if (!downstream_output_idle(r, c)) {
+    if (!downstream_output_idle(r)) {
         rc = ngx_http_output_filter(r, NULL);
     } else {
         out.buf = b;
@@ -766,7 +754,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_DONE;
     }
 
-    if (b->pos == b->last && downstream_output_idle(r, c)) {
+    if (b->pos == b->last && downstream_output_idle(r)) {
         b->pos = b->start;
         b->last = b->start;
     }
@@ -785,12 +773,13 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 }
 
 static ngx_int_t
-close_upstream_write(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t upload_drained)
+close_upstream_write(ngx_http_tunnel_ctx_t *ctx)
 {
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
 
-    if (!ctx->downstream_eof || !upload_drained || ctx->upstream_write_closed) {
+    if (!ctx->downstream_eof || !tunnel_upload_drained(ctx) ||
+        ctx->upstream_write_closed) {
         return NGX_OK;
     }
 
@@ -817,25 +806,4 @@ close_upstream_write(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t upload_drained)
     pc->write->ready = 0;
 
     return NGX_OK;
-}
-
-static ngx_inline ngx_uint_t
-downstream_output_idle(ngx_http_request_t *r, ngx_connection_t *c)
-{
-    return r->out == NULL && !r->buffered && !c->buffered;
-}
-
-static ngx_inline ngx_uint_t
-is_relay_finished(ngx_http_tunnel_ctx_t *ctx, ngx_http_request_t *r,
-                  ngx_connection_t *c, ngx_connection_t *pc,
-                  ngx_uint_t *upload_drained)
-{
-    ngx_uint_t download_drained;
-
-    *upload_drained = (ctx->downstream_in == NULL && ctx->flush_size == 0);
-
-    download_drained = (ctx->buffer->pos == ctx->buffer->last &&
-                        downstream_output_idle(r, c));
-
-    return (pc->read->eof && *upload_drained && download_drained);
 }

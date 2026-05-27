@@ -13,6 +13,15 @@
 #define RST_STREAM_DATA_MIN 48
 #define RST_STREAM_DATA_MAX 72
 
+#define padding_next_chain(cl)                                                 \
+    ({                                                                         \
+        ngx_chain_t *_pnc = (cl);                                              \
+        while (_pnc != NULL && ngx_buf_size(_pnc->buf) == 0) {                 \
+            _pnc = _pnc->next;                                                 \
+        }                                                                      \
+        _pnc;                                                                  \
+    })
+
 enum {
     PADDING_READ_HEADER_B0 = 0,
     PADDING_READ_HEADER_B1,
@@ -21,11 +30,10 @@ enum {
     PADDING_READ_DISCARD
 };
 
-static ngx_int_t    is_padding_enabled(ngx_http_request_t *r);
-static ngx_int_t    is_padding_present(ngx_http_request_t *r);
-static ngx_int_t    padding_generate_response_value(ngx_http_request_t *r,
-                                                    ngx_str_t          *value);
-static ngx_chain_t *padding_next_chain(ngx_chain_t *chain);
+static ngx_int_t is_padding_enabled(ngx_http_request_t *r);
+static ngx_int_t is_padding_present(ngx_http_request_t *r);
+static ngx_int_t padding_generate_response_value(ngx_http_request_t *r,
+                                                 ngx_str_t          *value);
 static ngx_int_t
 padding_h2_rst_stream_data_handler(ngx_http_v2_connection_t *h2c,
                                    ngx_http_v2_out_frame_t  *frame);
@@ -375,25 +383,6 @@ padding_generate_response_value(ngx_http_request_t *r, ngx_str_t *value)
     }
 
     return NGX_OK;
-}
-
-static ngx_chain_t *
-padding_next_chain(ngx_chain_t *chain)
-{
-    ngx_chain_t *cl;
-
-    for (;;) {
-        cl = chain;
-        if (cl == NULL) {
-            return NULL;
-        }
-
-        if (ngx_buf_size(cl->buf) != 0) {
-            return cl;
-        }
-
-        chain = cl->next;
-    }
 }
 
 void

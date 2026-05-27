@@ -77,16 +77,23 @@ typedef struct {
 
 struct ngx_http_tunnel_ctx_s {
     ngx_http_request_t                  *request;
-    ngx_buf_t                           *buffer;
     ngx_chain_t                         *downstream_in; /* r->request_body->bufs */
-    ngx_chain_t                         downstream_out; /* Only for header bytes */
+
+    ngx_buf_t                           *buffer;
+    ngx_chain_t                         downstream_out; /* 32 bytes header reserve */
+
     size_t                              flush_size;
     size_t                              buffer_tail_reserve;
+
     ngx_http_upstream_resolved_t        *resolved;
+
     tunnel_padding_ctx_t                *padding;
     tunnel_capsule_ctx_t                *capsule;
+
+    /* Data transform for padding, capsule */
     tunnel_relay_downstream_filter_pt   downstream_filter;
     tunnel_relay_upstream_filter_pt     upstream_filter;
+
     unsigned                            finalized : 1;
     unsigned                            content_handler_ref : 1;
     unsigned                            downstream_eof : 1;
@@ -178,9 +185,6 @@ void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
                                       ngx_chain_t **chain, ngx_chain_t *limit);
-ngx_uint_t tunnel_utils_copy_chain_to_buffer(ngx_http_request_t *r,
-                                             ngx_chain_t **chain, ngx_buf_t *b,
-                                             size_t limit);
 ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
 ngx_int_t                  tunnel_utils_init_extended_connect(ngx_conf_t *cf);
 ngx_int_t

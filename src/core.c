@@ -79,14 +79,14 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, udp_path),
      NULL},
 
-	{ngx_string("tunnel_connect_acl_eval_on"),
+    {ngx_string("tunnel_connect_acl_eval_on"),
      NGX_HTTP_SRV_CONF | NGX_CONF_TAKE1,
      tunnel_acl_eval_on,
      NGX_HTTP_SRV_CONF_OFFSET,
      0,
      NULL},
 
-	ngx_null_command
+    ngx_null_command
 };
 
 static ngx_http_module_t ngx_http_tunnel_module_ctx = {
@@ -100,7 +100,7 @@ static ngx_http_module_t ngx_http_tunnel_module_ctx = {
     ngx_http_tunnel_merge_srv_conf,
 
     NULL,
-	NULL
+    NULL
 };
 
 ngx_module_t ngx_http_tunnel_connect_module = {
@@ -363,11 +363,11 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
                               prev->upstream.connect_timeout,
                               conf->connect_timeout);
     ngx_conf_merge_msec_value(conf->upstream.send_timeout,
-							  prev->upstream.send_timeout,
-							  conf->idle_timeout);
+                              prev->upstream.send_timeout,
+                              conf->idle_timeout);
     ngx_conf_merge_msec_value(conf->upstream.read_timeout,
-							  prev->upstream.read_timeout,
-							  conf->idle_timeout);
+                              prev->upstream.read_timeout,
+                              conf->idle_timeout);
     ngx_conf_merge_msec_value(conf->upstream.next_upstream_timeout,
                               prev->upstream.next_upstream_timeout, 0);
     ngx_conf_merge_size_value(conf->upstream.send_lowat,
@@ -375,15 +375,15 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_size_value(conf->upstream.buffer_size,
                               prev->upstream.buffer_size, conf->buffer_size);
 
-	ngx_conf_merge_bitmask_value(conf->upstream.next_upstream,
-								 prev->upstream.next_upstream,
-								 (NGX_CONF_BITMASK_SET |
-								  NGX_HTTP_UPSTREAM_FT_ERROR |
-         NGX_HTTP_UPSTREAM_FT_TIMEOUT));
+    ngx_conf_merge_bitmask_value(conf->upstream.next_upstream,
+                                 prev->upstream.next_upstream,
+                                 (NGX_CONF_BITMASK_SET |
+                                  NGX_HTTP_UPSTREAM_FT_ERROR |
+                                  NGX_HTTP_UPSTREAM_FT_TIMEOUT));
 
     if (conf->upstream.next_upstream & NGX_HTTP_UPSTREAM_FT_OFF) {
-		conf->upstream.next_upstream = NGX_CONF_BITMASK_SET |
-									   NGX_HTTP_UPSTREAM_FT_OFF;
+        conf->upstream.next_upstream = NGX_CONF_BITMASK_SET |
+                                       NGX_HTTP_UPSTREAM_FT_OFF;
     }
 
     conf->upstream.ignore_input = 1;

@@ -11,8 +11,8 @@ tunnel_udp_is_request(ngx_http_request_t *r)
     static ngx_str_t connect_udp = ngx_string("connect-udp");
 
     if (r->connect_protocol.len != connect_udp.len ||
-        ngx_strncmp(r->connect_protocol.data, connect_udp.data,
-                    connect_udp.len) != 0) {
+        ngx_strncasecmp(r->connect_protocol.data, connect_udp.data,
+                        connect_udp.len) != 0) {
         return NGX_DECLINED;
     }
 
@@ -26,14 +26,6 @@ tunnel_udp_set_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
     ngx_http_tunnel_srv_conf_t *tscf;
 
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
-
-    if (ctx->resolved == NULL) {
-        ctx->resolved =
-            ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
-        if (ctx->resolved == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-    }
 
     /* udp_path is default using $request_uri */
     if (ngx_http_complex_value(r, tscf->udp_path, &params) != NGX_OK) {

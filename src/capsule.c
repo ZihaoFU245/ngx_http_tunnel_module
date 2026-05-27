@@ -9,11 +9,8 @@
 #include "ngx_http_tunnel_module.h"
 
 #define capsule_reset(capsule)                                                 \
-    do {                                                                       \
-        (capsule)->capsule_len = 0;                                            \
-        (capsule)->payload_size = 0;                                           \
-        (capsule)->read_state = CAPSULE_READ_TYPE;                             \
-    } while (0)
+    ((capsule)->capsule_len = 0, (capsule)->payload_size = 0,                  \
+     (capsule)->read_state = CAPSULE_READ_TYPE)
 
 static ngx_int_t capsule_encode_varint(u_char **pos, u_char *last,
                                        uint64_t value);
@@ -39,7 +36,9 @@ tunnel_capsule_is_header_present(ngx_http_request_t *r)
     ngx_list_part_t *part;
     ngx_table_elt_t *header;
     ngx_uint_t       found, i;
+    size_t           match_len;
 
+    match_len = sizeof("?1") - 1;
     found = 0;
     part = &r->headers_in.headers.part;
     header = part->elts;
@@ -59,8 +58,8 @@ tunnel_capsule_is_header_present(ngx_http_request_t *r)
             continue;
         }
 
-        if (header[i].value.len != sizeof("?1") - 1 ||
-            ngx_strncmp(header[i].value.data, "?1", sizeof("?1") - 1) != 0) {
+        if (header[i].value.len != match_len ||
+            ngx_strncmp(header[i].value.data, "?1", match_len) != 0) {
             return NGX_DECLINED;
         }
 

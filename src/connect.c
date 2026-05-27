@@ -33,7 +33,6 @@ tunnel_connect_set_target(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
         return NGX_HTTP_BAD_REQUEST;
     }
 
-    /* r->upstream->resolved is ctx->resolved */
     resolved = ctx->resolved;
     resolved->host = r->headers_in.server;
     resolved->port = r->port;
