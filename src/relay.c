@@ -1,3 +1,4 @@
+
 /*
  * Copyright(c) 2026 ZihaoFU245
  *
@@ -491,6 +492,10 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     r = ctx->request;
 
     if (ctx->downstream_eof) {
+        return NGX_OK;
+    }
+
+    if (ctx->flush_size != 0) {
         return NGX_OK;
     }
 

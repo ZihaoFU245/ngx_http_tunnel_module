@@ -136,6 +136,10 @@ tunnel_capsule_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
                 goto incomplete;
             }
 
+            if (capsule->capsule_len > NGX_HTTP_TUNNEL_MAX_DATAGRAM_CAPSULE) {
+                goto invalid;
+            }
+
             capsule->read_state = CAPSULE_READ_CONTEXT;
             *activity = 1;
             continue;
@@ -164,10 +168,6 @@ tunnel_capsule_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
         case CAPSULE_READ_PAYLOAD:
             if (ctx->downstream_in == NULL) {
                 goto incomplete;
-            }
-
-            if (capsule->payload_size > NGX_MAX_SIZE_T_VALUE) {
-                goto invalid;
             }
 
             rc = capsule_prepare_datagram(ctx, (size_t)capsule->payload_size);
