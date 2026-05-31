@@ -159,6 +159,7 @@ tunnel_capsule_downstream_filter(ngx_http_tunnel_ctx_t *ctx,
             *activity = 1;
 
             if (capsule->payload_size == 0) {
+                ctx->downstream_empty_datagram = 1;
                 capsule_reset(capsule);
                 return NGX_OK;
             }
@@ -215,7 +216,7 @@ tunnel_capsule_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     b = ctx->buffer;
 
     payload_len = (size_t)(b->last - b->pos);
-    if (payload_len == 0) {
+    if (payload_len == 0 && !ctx->upstream_empty_datagram) {
         return NGX_AGAIN;
     }
 

@@ -104,6 +104,9 @@ struct ngx_http_tunnel_ctx_s {
     unsigned                            upstream_write_closed : 1;
     unsigned                            read_again_event_posted : 1;
     unsigned                            extended_connect : 1;
+
+    unsigned                            downstream_empty_datagram : 1;
+    unsigned                            upstream_empty_datagram : 1;
 };
 
 extern ngx_module_t ngx_http_tunnel_connect_module;

@@ -13,11 +13,13 @@
     ((r)->out == NULL && !(r)->buffered && !(r)->connection->buffered)
 
 #define tunnel_upload_drained(ctx)                                             \
-    ((ctx)->downstream_in == NULL && (ctx)->flush_size == 0)
+    ((ctx)->downstream_in == NULL && (ctx)->flush_size == 0 &&                 \
+     !(ctx)->downstream_empty_datagram)
 
 static void      request_body_post_handler(ngx_http_request_t *r);
 static ngx_int_t recv_downstream(ngx_http_tunnel_ctx_t *ctx,
                                  ngx_uint_t            *activity);
+static ngx_int_t send_empty_datagram(ngx_connection_t *c, u_char *buf);
 static ngx_int_t send_upstream(ngx_http_tunnel_ctx_t *ctx,
                                ngx_uint_t            *activity);
 static ngx_int_t recv_upstream(ngx_http_tunnel_ctx_t *ctx,
@@ -568,7 +570,8 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
      * A non-zero flush_size means a previous filter-selected payload has not
      * finished sending yet.
      */
-    if (ctx->flush_size == 0 && ctx->downstream_filter != NULL) {
+    if (!ctx->downstream_empty_datagram && ctx->flush_size == 0 &&
+        ctx->downstream_filter != NULL) {
         rc = ctx->downstream_filter(ctx, activity);
         if (rc == NGX_AGAIN) {
             return NGX_OK;
@@ -581,9 +584,31 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
          * When flush_size is 0, it is owned by filter, this check prevent
          * leaks.
          */
-        if (ctx->downstream_filter != NULL && ctx->flush_size == 0) {
+        if (ctx->downstream_filter != NULL && ctx->flush_size == 0 &&
+            !ctx->downstream_empty_datagram) {
             return NGX_OK;
         }
+    }
+
+    if (ctx->downstream_empty_datagram) {
+        if (!pc->write->ready) {
+            return NGX_OK;
+        }
+
+        rc = send_empty_datagram(pc, ctx->buffer->start);
+
+        if (rc == NGX_AGAIN) {
+            return NGX_OK;
+        }
+
+        if (rc != NGX_OK) {
+            return NGX_DONE;
+        }
+
+        ctx->downstream_empty_datagram = 0;
+        *activity = 1;
+
+        return NGX_OK;
     }
 
     if (ctx->downstream_in == NULL && ctx->flush_size != 0 &&
@@ -634,8 +659,8 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     pc = r->upstream->peer.connection;
     b = ctx->buffer;
 
-    if (pc == NULL || !pc->read->ready || b->pos != b->last ||
-        !downstream_output_idle(r)) {
+    if (pc == NULL || !pc->read->ready || ctx->upstream_empty_datagram ||
+        b->pos != b->last || !downstream_output_idle(r)) {
         return NGX_OK;
     }
 
@@ -664,6 +689,8 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     if (n == 0) {
         if (pc->type == SOCK_DGRAM) {
+            ctx->upstream_empty_datagram = 1;
+            *activity = 1;
             return NGX_OK;
         }
 
@@ -704,7 +731,8 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     c = r->connection;
     b = ctx->buffer;
 
-    if (b->pos == b->last && downstream_output_idle(r)) {
+    if (b->pos == b->last && !ctx->upstream_empty_datagram &&
+        downstream_output_idle(r)) {
         return NGX_OK;
     }
 
@@ -745,6 +773,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         b->flush = 1;
         rc = ngx_http_output_filter(r, chain);
         b->flush = 0;
+        ctx->upstream_empty_datagram = 0;
 
         if (chain == &ctx->downstream_out) {
             ctx->downstream_out.next = NULL;
@@ -807,4 +836,32 @@ close_upstream_write(ngx_http_tunnel_ctx_t *ctx)
     pc->write->ready = 0;
 
     return NGX_OK;
+}
+
+static ngx_int_t
+send_empty_datagram(ngx_connection_t *c, u_char *buf)
+{
+    ssize_t   n;
+    ngx_err_t err;
+
+    for (;;) {
+        n = send(c->fd, buf, 0, 0);
+
+        if (n >= 0) {
+            return NGX_OK;
+        }
+
+        err = ngx_socket_errno;
+
+        if (err == NGX_EAGAIN) {
+            c->write->ready = 0;
+            return NGX_AGAIN;
+        }
+
+        if (err != NGX_EINTR) {
+            c->write->error = 1;
+            (void) ngx_connection_error(c, err, "send() failed");
+            return NGX_ERROR;
+        }
+    }
 }
