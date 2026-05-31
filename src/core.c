@@ -122,6 +122,8 @@ ngx_int_t
 ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 {
     ngx_int_t                   rc;
+    ngx_str_t                  *protocol;
+    ngx_http_tunnel_ctx_t      *ctx;
     ngx_http_tunnel_srv_conf_t *tscf;
 
     if (r->method != NGX_HTTP_CONNECT) {
@@ -142,6 +144,21 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
         return rc;
     }
 #endif
+
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_tunnel_ctx_t));
+    if (ctx == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ctx->resolved = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
+    if (ctx->resolved == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    protocol = &r->connect_protocol;
+    ctx->extended_connect = protocol->len != 0;
+    ctx->protocol = tunnel_utils_match_protocol(protocol);
+    ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
 
     rc = tunnel_acl_eval(r);
     if (rc != NGX_OK) {
@@ -184,19 +201,14 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     }
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
-    if (ctx != NULL) {
-        return NGX_DONE;
-    }
-
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_tunnel_ctx_t));
     if (ctx == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     ctx->request = r;
 
-    padding_needed = (r->connect_protocol.len == 0) ? tunnel_padding_needed(r)
-                                                    : NGX_DECLINED;
+    padding_needed =
+        ctx->extended_connect ? NGX_DECLINED : tunnel_padding_needed(r);
 
     ctx->buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
     if (ctx->buffer == NULL) {
@@ -208,7 +220,7 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
      * Reserve 32 bytes. Padding headers only use 3 bytes, capsule contains
      * 2 varint, at most 16 bytes. reserve 32 is adequate.
      */
-    if (r->connect_protocol.len != 0 || padding_needed == NGX_OK) {
+    if (ctx->extended_connect || padding_needed == NGX_OK) {
         ctx->downstream_out.buf =
             ngx_create_temp_buf(r->pool, HEADER_RESERVE_BYTES);
         if (ctx->downstream_out.buf == NULL) {
@@ -232,8 +244,6 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         ctx->downstream_filter = tunnel_padding_downstream_filter;
         ctx->upstream_filter = tunnel_padding_upstream_filter;
     }
-
-    ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
 
     if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -447,19 +457,59 @@ ngx_int_t
 tunnel_get_target_host_handler(ngx_http_request_t        *r,
                                ngx_http_variable_value_t *v, uintptr_t data)
 {
+    ngx_int_t                   rc;
+    ngx_str_t                   params;
+    ngx_http_tunnel_ctx_t      *ctx;
+    ngx_http_tunnel_srv_conf_t *tscf;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
+
+    if (ctx != NULL && ctx->extended_connect) {
+        tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
+
+        if (ngx_http_complex_value(r, tscf->udp_path, &params) != NGX_OK) {
+            return NGX_ERROR;
+        }
+
+        rc = tunnel_util_parse_extended_connect(r, &params, ctx->resolved);
+        if (rc == NGX_HTTP_INTERNAL_SERVER_ERROR) {
+            return NGX_ERROR;
+        }
+
+        if (rc != NGX_OK) {
+            goto not_found;
+        }
+
+        v->data =
+            ngx_pnalloc(r->pool, ctx->resolved->host.len + NGX_INT_T_LEN + 1);
+        if (v->data == NULL) {
+            return NGX_ERROR;
+        }
+
+        v->len = ngx_sprintf(v->data, "%V:%ui", &ctx->resolved->host,
+                             (ngx_uint_t)ctx->resolved->port) -
+                 v->data;
+
+        goto found;
+    }
+
     if (r->method != NGX_HTTP_CONNECT || r->host_start == NULL ||
         r->host_end == NULL) {
+    not_found:
         v->valid = 0;
         v->no_cacheable = 0;
         v->not_found = 1;
         return NGX_OK;
     }
 
+    v->len = r->host_end - r->host_start;
+    v->data = r->host_start;
+
+found:
+
     v->valid = 1;
     v->no_cacheable = 0;
     v->not_found = 0;
-    v->len = r->host_end - r->host_start;
-    v->data = r->host_start;
 
     return NGX_OK;
 }
@@ -518,7 +568,7 @@ enabled:
         return NGX_ERROR;
     }
 
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers);
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_ACCESS_PHASE].handlers);
     if (h == NULL) {
         return NGX_ERROR;
     }

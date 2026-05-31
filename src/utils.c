@@ -148,9 +148,9 @@ tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
 }
 
 ngx_http_tunnel_protocol_t
-tunnel_utils_match_protocol(ngx_http_request_t *r)
+tunnel_utils_match_protocol(ngx_str_t *protocol)
 {
-    if (tunnel_udp_is_request(r) == NGX_OK) {
+    if (tunnel_udp_is_request(protocol) == NGX_OK) {
         return CONNECT_UDP;
     }
 
@@ -191,4 +191,3 @@ tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
         ngx_free_chain(r->pool, cl);
     }
 }
-

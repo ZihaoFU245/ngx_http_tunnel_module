@@ -13,11 +13,6 @@ tunnel_connect_init_upstream_peer(ngx_http_request_t    *r,
         return NGX_ERROR;
     }
 
-    ctx->resolved = ngx_pcalloc(r->pool, sizeof(ngx_http_upstream_resolved_t));
-    if (ctx->resolved == NULL) {
-        return NGX_ERROR;
-    }
-
     r->upstream->resolved = ctx->resolved;
 
     return NGX_OK;
@@ -52,7 +47,6 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
                                   ngx_http_tunnel_ctx_t *ctx)
 {
     ngx_int_t                   rc;
-    ngx_http_tunnel_protocol_t  proto;
     ngx_http_tunnel_srv_conf_t *tscf;
 
     /*
@@ -61,13 +55,11 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
      * for `:protocol`, this requires a patch to
      * nginx core.
      */
-    if (r->connect_protocol.len == 0) {
+    if (!ctx->extended_connect) {
         return NGX_DECLINED;
     }
 
-    proto = tunnel_utils_match_protocol(r);
-
-    switch (proto) {
+    switch (ctx->protocol) {
 
     case CONNECT_UDP:
         tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);

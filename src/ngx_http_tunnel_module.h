@@ -89,6 +89,7 @@ struct ngx_http_tunnel_ctx_s {
     size_t                              buffer_tail_reserve;
 
     ngx_http_upstream_resolved_t        *resolved;
+    ngx_http_tunnel_protocol_t          protocol;
 
     tunnel_padding_ctx_t                *padding;
     tunnel_capsule_ctx_t                *capsule;
@@ -102,6 +103,7 @@ struct ngx_http_tunnel_ctx_s {
     unsigned                            downstream_eof : 1;
     unsigned                            upstream_write_closed : 1;
     unsigned                            read_again_event_posted : 1;
+    unsigned                            extended_connect : 1;
 };
 
 extern ngx_module_t ngx_http_tunnel_connect_module;
@@ -144,9 +146,8 @@ ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
 void      tunnel_connect_abort_request(ngx_http_request_t *r);
 void      tunnel_connect_finalize_request(ngx_http_request_t *r, ngx_int_t rc);
 
-ngx_int_t tunnel_udp_is_request(ngx_http_request_t *r);
-ngx_int_t tunnel_udp_set_target(ngx_http_request_t    *r,
-                                ngx_http_tunnel_ctx_t *ctx);
+ngx_int_t tunnel_udp_is_request(ngx_str_t *protocol);
+ngx_int_t tunnel_udp_set_target(ngx_http_request_t *r);
 ngx_int_t tunnel_udp_init_upstream(ngx_http_request_t    *r,
                                    ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_udp_process_header(ngx_http_request_t *r);
@@ -188,7 +189,7 @@ void tunnel_utils_clear_timer(ngx_event_t *ev);
 void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
                                       ngx_chain_t **chain, ngx_chain_t *limit);
-ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_http_request_t *r);
+ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_str_t *protocol);
 ngx_int_t                  tunnel_utils_init_extended_connect(ngx_conf_t *cf);
 ngx_int_t
 tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
