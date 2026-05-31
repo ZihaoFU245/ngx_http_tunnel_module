@@ -161,7 +161,7 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
     ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
 
     rc = tunnel_acl_eval(r);
-    if (rc != NGX_OK) {
+    if (rc != NGX_OK && rc != NGX_DECLINED) {
         if (rc == NGX_HTTP_BAD_REQUEST || rc == NGX_HTTP_FORBIDDEN) {
             return rc;
         }
@@ -174,7 +174,7 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
 
     r->content_handler = ngx_http_tunnel_content_handler;
 
-    return NGX_DECLINED;
+    return rc;
 }
 
 ngx_int_t
