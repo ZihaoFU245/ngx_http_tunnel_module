@@ -495,10 +495,6 @@ recv_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_OK;
     }
 
-    if (ctx->flush_size != 0) {
-        return NGX_OK;
-    }
-
     if (ctx->downstream_in != NULL && ctx->downstream_filter == NULL) {
         return NGX_OK;
     }

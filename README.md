@@ -182,9 +182,10 @@ http {
 
 	# ---------------------------------------------
 	# A map is used in ACL for O(1) lookup,
-	# $connect_target_host variable provides raw
-	# authority header, it is your job to regex
-	# match these authority headers. Test the ACL
+	# $connect_target_host variable provides the raw
+	# authority for classic CONNECT and the parsed
+	# target authority for CONNECT-UDP. It is your job
+	# to regex match these authorities. Test the ACL
 	# before production, some clients put authority
 	# as raw ip, raw host, or even host:port.
 	# This can be tricky, be careful!
@@ -259,7 +260,7 @@ http {
 		tunnel_connect_idle_timeout 30s;
 
 		# 0: deny, 1: allow, 2: deny + log, 3: allow + log.
-		# $connect_target_host is the raw CONNECT authority.
+		# $connect_target_host is the effective target authority.
 		tunnel_connect_acl_eval_on $is_granted;
 
 		tunnel_connect_udp on; 							# Enable connect udp with capsule protocol

@@ -259,12 +259,7 @@ tunnel_padding_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    if (payload_size < 100) {
-        padding_size = NGX_HTTP_TUNNEL_MAX_PADDING_SIZE - payload_size +
-                       (ngx_random() % (payload_size + 1));
-    } else {
-        padding_size = ngx_random() % (NGX_HTTP_TUNNEL_MAX_PADDING_SIZE + 1);
-    }
+    padding_size = ngx_random() % (NGX_HTTP_TUNNEL_MAX_PADDING_SIZE + 1);
 
     hb = ctx->downstream_out.buf;
 
@@ -363,7 +358,7 @@ padding_generate_response_value(ngx_http_request_t *r, ngx_str_t *value)
     }
     value->len = len;
 
-    first = ngx_min((size_t)len, (size_t)36);
+    first = 16;
 
     bits = ngx_random();
     n = 7;

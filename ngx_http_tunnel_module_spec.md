@@ -334,7 +334,7 @@ tunnel_acl_eval_on $variable;
 
 Evaluates a variable for CONNECT ACL decisions. The variable is normally
 produced by nginx `map` using `$connect_target_host`, which contains the raw
-CONNECT authority exactly as provided by the client.
+classic CONNECT authority or the parsed CONNECT-UDP target authority.
 
 #### Values
 
@@ -628,7 +628,8 @@ The module must not attempt location-based URI routing for CONNECT.
 
 CONNECT-UDP does not use classic CONNECT authority-form target parsing. It uses
 the evaluated `tunnel_udp_path` string and `tunnel_util_parse_extended_connect`
-to fill the upstream resolved host and port.
+to produce the target authority exposed as `$connect_target_host`. UDP upstream
+setup parses that authority into the resolved host and port.
 
 Malformed or unparseable CONNECT-UDP targets must be rejected with
 `400 Bad Request`. If `tunnel_udp_path` evaluates to an empty string, this is a
