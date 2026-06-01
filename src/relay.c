@@ -19,7 +19,6 @@
 static void      request_body_post_handler(ngx_http_request_t *r);
 static ngx_int_t recv_downstream(ngx_http_tunnel_ctx_t *ctx,
                                  ngx_uint_t            *activity);
-static ngx_int_t send_empty_datagram(ngx_connection_t *c, u_char *buf);
 static ngx_int_t send_upstream(ngx_http_tunnel_ctx_t *ctx,
                                ngx_uint_t            *activity);
 static ngx_int_t recv_upstream(ngx_http_tunnel_ctx_t *ctx,
@@ -552,7 +551,9 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 {
     off_t               before_sent;
     off_t               sent;
+    ngx_buf_t           empty;
     ngx_chain_t        *cl, *out;
+    ngx_chain_t         empty_chain;
     ngx_connection_t   *pc;
     ngx_http_request_t *r;
     ngx_int_t           rc;
@@ -595,14 +596,20 @@ send_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
             return NGX_OK;
         }
 
-        rc = send_empty_datagram(pc, ctx->buffer->start);
+        ngx_memzero(&empty, sizeof(ngx_buf_t));
+        empty.flush = 1;
 
-        if (rc == NGX_AGAIN) {
-            return NGX_OK;
+        empty_chain.buf = &empty;
+        empty_chain.next = NULL;
+
+        out = pc->send_chain(pc, &empty_chain, 0);
+        if (out == NGX_CHAIN_ERROR) {
+            pc->write->error = 1;
+            return NGX_DONE;
         }
 
-        if (rc != NGX_OK) {
-            return NGX_DONE;
+        if (out != NULL) {
+            return NGX_OK;
         }
 
         ctx->downstream_empty_datagram = 0;
@@ -763,19 +770,27 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
                 return NGX_OK;
             }
             if (rc == NGX_OK) {
-                ctx->downstream_out.next = &out;
                 chain = &ctx->downstream_out;
+                if (!ctx->upstream_empty_datagram) {
+                    ctx->downstream_out.next = &out;
+                }
             } else if (rc != NGX_DECLINED) {
                 return rc;
             }
         }
 
-        b->flush = 1;
+        if (ctx->upstream_empty_datagram) {
+            ctx->downstream_out.buf->flush = 1;
+        } else {
+            b->flush = 1;
+        }
+
         rc = ngx_http_output_filter(r, chain);
         b->flush = 0;
         ctx->upstream_empty_datagram = 0;
 
         if (chain == &ctx->downstream_out) {
+            ctx->downstream_out.buf->flush = 0;
             ctx->downstream_out.next = NULL;
         }
     }
@@ -836,32 +851,4 @@ close_upstream_write(ngx_http_tunnel_ctx_t *ctx)
     pc->write->ready = 0;
 
     return NGX_OK;
-}
-
-static ngx_int_t
-send_empty_datagram(ngx_connection_t *c, u_char *buf)
-{
-    ssize_t   n;
-    ngx_err_t err;
-
-    for (;;) {
-        n = send(c->fd, buf, 0, 0);
-
-        if (n >= 0) {
-            return NGX_OK;
-        }
-
-        err = ngx_socket_errno;
-
-        if (err == NGX_EAGAIN) {
-            c->write->ready = 0;
-            return NGX_AGAIN;
-        }
-
-        if (err != NGX_EINTR) {
-            c->write->error = 1;
-            (void) ngx_connection_error(c, err, "send() failed");
-            return NGX_ERROR;
-        }
-    }
 }

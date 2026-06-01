@@ -50,10 +50,8 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
     ngx_http_tunnel_srv_conf_t *tscf;
 
     /*
-     * TODO: watch nginx core upstream.
-     * `connect_protocol` is the pseudo header
-     * for `:protocol`, this requires a patch to
-     * nginx core.
+     * connect_protocol stores the :protocol pseudo header. This field is
+     * provided by the nginx core header parsing patch.
      */
     if (!ctx->extended_connect) {
         return NGX_DECLINED;
@@ -66,7 +64,7 @@ tunnel_extended_connect_branching(ngx_http_request_t    *r,
 
         if (!tscf->udp) {
             ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-                          "tunnel UDP is disabled");
+                          "CONNECT-UDP is not allowed");
             return NGX_HTTP_NOT_ALLOWED;
         }
 

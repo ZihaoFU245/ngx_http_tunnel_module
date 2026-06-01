@@ -156,8 +156,16 @@ ngx_http_tunnel_access_handler(ngx_http_request_t *r)
     }
 
     protocol = &r->connect_protocol;
-    ctx->extended_connect = protocol->len != 0;
+    ctx->extended_connect = (protocol->len != 0);
     ctx->protocol = tunnel_utils_match_protocol(protocol);
+
+    if (ctx->extended_connect && ctx->protocol == UNKNOWN_PROTOCOL) {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                      "client sent unknown extended CONNECT protocol \"%V\"",
+                      protocol);
+        return NGX_HTTP_BAD_REQUEST;
+    }
+
     ngx_http_set_ctx(r, ctx, ngx_http_tunnel_connect_module);
 
     rc = tunnel_acl_eval(r);
@@ -358,7 +366,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
 #endif
 
     ngx_conf_merge_value(conf->padding, prev->padding, 0);
-    ngx_conf_merge_value(conf->udp, prev->udp, 1);
+    ngx_conf_merge_value(conf->udp, prev->udp, 0);
     ngx_conf_merge_value(conf->upstream.store, prev->upstream.store, 0);
     ngx_conf_merge_uint_value(conf->upstream.store_access,
                               prev->upstream.store_access, 0600);

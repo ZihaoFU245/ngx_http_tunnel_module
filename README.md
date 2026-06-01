@@ -319,7 +319,7 @@ will be send. This happens when upstream server has no response.
 9. `tunnel_connect_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
 deny/allow. 2/3 means access deny/allow with logging.
 
-10. `tunnel_connect_udp`: Default to on. With connect udp over MASQUE capsule protocol. Client
+10. `tunnel_connect_udp`: Default to off. With connect udp over MASQUE capsule protocol. Client
 send header must present `capsule-protocol = ?1`, otherwise 400 rejected.
 
 11. `tunnel_connect_udp_path`: Complex value, MASQUE encode target host and port in path. Default

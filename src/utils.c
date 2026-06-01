@@ -85,6 +85,10 @@ tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    if (resolved->host.len != 0) {
+        return NGX_OK;
+    }
+
     /*
      * params is generated from tunnel_udp_path, which defaults to
      * $request_uri.  An empty value means the configured complex value did
@@ -150,6 +154,10 @@ tunnel_util_parse_extended_connect(ngx_http_request_t *r, ngx_str_t *params,
 ngx_http_tunnel_protocol_t
 tunnel_utils_match_protocol(ngx_str_t *protocol)
 {
+    if (protocol->len == 0) {
+        return UNKNOWN_PROTOCOL;
+    }
+
     if (tunnel_udp_is_request(protocol) == NGX_OK) {
         return CONNECT_UDP;
     }

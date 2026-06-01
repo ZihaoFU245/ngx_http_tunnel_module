@@ -25,6 +25,7 @@ tunnel_udp_set_target(ngx_http_request_t *r)
     ngx_str_t                  name = ngx_string("connect_target_host");
     ngx_http_variable_value_t *value;
 
+    /* This invokes the variable handler, and will set resolved. */
     value = ngx_http_get_variable(r, &name, ngx_hash_key(name.data, name.len));
     if (value == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
