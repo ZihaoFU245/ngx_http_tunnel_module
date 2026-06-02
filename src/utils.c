@@ -168,25 +168,6 @@ tunnel_utils_match_protocol(ngx_str_t *protocol)
 }
 
 void
-tunnel_utils_clear_timer(ngx_event_t *ev)
-{
-    if (ev->timer_set) {
-        ngx_del_timer(ev);
-    }
-}
-
-void
-tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout)
-{
-    if (ev->active) {
-        ngx_add_timer(ev, timeout);
-        return;
-    }
-
-    tunnel_utils_clear_timer(ev);
-}
-
-void
 tunnel_utils_free_consumed_chain(ngx_http_request_t *r, ngx_chain_t **chain,
                                  ngx_chain_t *limit)
 {

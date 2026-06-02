@@ -349,7 +349,8 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     }
     ngx_conf_merge_msec_value(conf->connect_timeout, prev->connect_timeout,
                               60000);
-    ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout, 30000);
+    ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout,
+                              120000);
     ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
     ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
                              prev->probe_resistance_allow_methods, "");

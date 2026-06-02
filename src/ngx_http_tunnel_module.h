@@ -188,8 +188,6 @@ void tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx);
 void tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 void tunnel_relay_cleanup(void *data);
 
-void tunnel_utils_clear_timer(ngx_event_t *ev);
-void tunnel_utils_update_idle_timer(ngx_event_t *ev, ngx_msec_t timeout);
 void tunnel_utils_free_consumed_chain(ngx_http_request_t *r,
                                       ngx_chain_t **chain, ngx_chain_t *limit);
 ngx_http_tunnel_protocol_t tunnel_utils_match_protocol(ngx_str_t *protocol);

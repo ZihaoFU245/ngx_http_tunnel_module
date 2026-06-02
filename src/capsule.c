@@ -431,6 +431,7 @@ capsule_chain_read_varint(ngx_chain_t **chain, u_char **pos, uint64_t *value,
     cl = *chain;
     p = *pos;
 
+    /* TODO: inefficient method */
     for (;;) {
         if (cl == NULL) {
             return NGX_AGAIN;

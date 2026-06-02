@@ -51,8 +51,13 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
 
     datagram = (pc->type == SOCK_DGRAM);
 
-    tunnel_utils_clear_timer(pc->read);
-    tunnel_utils_clear_timer(pc->write);
+    if (pc->read->timer_set) {
+        ngx_del_timer(pc->read);
+    }
+
+    if (pc->write->timer_set) {
+        ngx_del_timer(pc->write);
+    }
 
     r->keepalive = 0;
     c->log->action =
@@ -95,10 +100,10 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     cln->handler = tunnel_relay_cleanup;
     cln->data = ctx;
 
-    tunnel_utils_update_idle_timer(pc->write, tscf->idle_timeout);
-    tunnel_utils_update_idle_timer(pc->read, tscf->idle_timeout);
-    tunnel_utils_update_idle_timer(c->write, tscf->idle_timeout);
-    tunnel_utils_update_idle_timer(c->read, tscf->idle_timeout);
+    ngx_add_timer(pc->write, tscf->idle_timeout);
+    ngx_add_timer(pc->read, tscf->idle_timeout);
+    ngx_add_timer(c->write, tscf->idle_timeout);
+    ngx_add_timer(c->read, tscf->idle_timeout);
 
     if (pc->read->ready) {
         tunnel_relay_post_downstream_read(ctx);
@@ -332,15 +337,10 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
     }
 
     if (activity) {
-        tunnel_utils_clear_timer(pc->read);
-        tunnel_utils_clear_timer(pc->write);
-        tunnel_utils_clear_timer(c->read);
-        tunnel_utils_clear_timer(c->write);
-
-        tunnel_utils_update_idle_timer(pc->write, idle_timeout);
-        tunnel_utils_update_idle_timer(pc->read, idle_timeout);
-        tunnel_utils_update_idle_timer(c->write, idle_timeout);
-        tunnel_utils_update_idle_timer(c->read, idle_timeout);
+        ngx_add_timer(pc->write, idle_timeout);
+        ngx_add_timer(pc->read, idle_timeout);
+        ngx_add_timer(c->write, idle_timeout);
+        ngx_add_timer(c->read, idle_timeout);
         ctx->read_again_event_posted = 0;
     }
 
@@ -423,8 +423,13 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
         rc = ngx_http_send_special(r, NGX_HTTP_LAST);
     }
 
-    tunnel_utils_clear_timer(c->read);
-    tunnel_utils_clear_timer(c->write);
+    if (c->read->timer_set) {
+        ngx_del_timer(c->read);
+    }
+
+    if (c->write->timer_set) {
+        ngx_del_timer(c->write);
+    }
 
     if (u != NULL) {
         if (u->cleanup) {
@@ -444,8 +449,13 @@ tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc)
 
         pc = u->peer.connection;
         if (pc != NULL) {
-            tunnel_utils_clear_timer(pc->read);
-            tunnel_utils_clear_timer(pc->write);
+            if (pc->read->timer_set) {
+                ngx_del_timer(pc->read);
+            }
+
+            if (pc->write->timer_set) {
+                ngx_del_timer(pc->write);
+            }
 
             /*
              * ngx_close_connection(pc) does not destroy the peer pool; this
@@ -681,7 +691,6 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         }
 
         size -= ctx->buffer_tail_reserve;
-        size = ngx_min(size, (size_t)65535);
     }
 
     if (size == 0) {
