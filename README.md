@@ -257,7 +257,7 @@ http {
 
         tunnel_connect_padding off;             # Opt in padding scheme for h2/h3
         tunnel_connect_upstream_timeout 60s;
-		tunnel_connect_idle_timeout 30s;
+		tunnel_connect_idle_timeout 120s;
 
 		# 0: deny, 1: allow, 2: deny + log, 3: allow + log.
 		# $connect_target_host is the effective target authority.
@@ -314,7 +314,7 @@ not send "Allow" header when it is empty, used with `tunnel_connect_probe_resist
 7. `tunnel_connect_upstream_timeout`: Time, default to 60s. On timeout, internal server error
 will be send. This happens when upstream server has no response.
 
-8. `tunnel_connect_idle_timeout`: Time, default to 30s. On timeout, tunnel will be closed.
+8. `tunnel_connect_idle_timeout`: Time, default to 120s. On timeout, tunnel will be closed.
 
 9. `tunnel_connect_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
 deny/allow. 2/3 means access deny/allow with logging.
