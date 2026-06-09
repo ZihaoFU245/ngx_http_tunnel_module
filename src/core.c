@@ -218,8 +218,13 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
     padding_needed =
         ctx->extended_connect ? NGX_DECLINED : tunnel_padding_needed(r);
 
-    ctx->buffer = ngx_create_temp_buf(r->pool, tscf->buffer_size);
-    if (ctx->buffer == NULL) {
+    ctx->buffers[SEND_BUF] = ngx_create_temp_buf(r->pool, tscf->buffer_size);
+    if (ctx->buffers[SEND_BUF] == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    ctx->buffers[RECV_BUF] = ngx_create_temp_buf(r->pool, tscf->buffer_size);
+    if (ctx->buffers[RECV_BUF] == NULL) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 

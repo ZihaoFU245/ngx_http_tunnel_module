@@ -247,7 +247,7 @@ tunnel_padding_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_DECLINED;
     }
 
-    b = ctx->buffer;
+    b = ctx->buffers[SEND_BUF];
 
     payload_size = b->last - b->pos;
     if (payload_size == 0) {

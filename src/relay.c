@@ -16,6 +16,15 @@
     ((ctx)->downstream_in == NULL && (ctx)->flush_size == 0 &&                 \
      !(ctx)->downstream_empty_datagram)
 
+#define swap_buffers(ctx)                                               \
+    do {                                                                       \
+        ngx_buf_t *b;                                                          \
+                                                                               \
+        b = (ctx)->buffers[SEND_BUF];                                          \
+        (ctx)->buffers[SEND_BUF] = (ctx)->buffers[RECV_BUF];                   \
+        (ctx)->buffers[RECV_BUF] = b;                                          \
+    } while (0)
+
 static void      request_body_post_handler(ngx_http_request_t *r);
 static ngx_int_t recv_downstream(ngx_http_tunnel_ctx_t *ctx,
                                  ngx_uint_t            *activity);
@@ -294,7 +303,8 @@ tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx)
             /* upload drained */
             tunnel_upload_drained(ctx) &&
             /* download drained */
-            ctx->buffer->pos == ctx->buffer->last &&
+            ctx->buffers[SEND_BUF]->pos == ctx->buffers[SEND_BUF]->last &&
+            ctx->buffers[RECV_BUF]->pos == ctx->buffers[RECV_BUF]->last &&
             downstream_output_idle(r)) {
             tunnel_relay_finalize(ctx, NGX_OK);
             return;
@@ -674,15 +684,17 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     pc = r->upstream->peer.connection;
-    b = ctx->buffer;
+    b = ctx->buffers[RECV_BUF];
 
     if (pc == NULL || !pc->read->ready || ctx->upstream_empty_datagram ||
-        b->pos != b->last || !downstream_output_idle(r)) {
+        b->last == b->end) {
         return NGX_OK;
     }
 
-    b->pos = b->start;
-    b->last = b->start;
+    if (pc->type == SOCK_DGRAM && b->pos != b->last) {
+        return NGX_OK;
+    }
+
     size = b->end - b->last;
 
     if (ctx->buffer_tail_reserve != 0) {
@@ -745,7 +757,18 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
 
     r = ctx->request;
     c = r->connection;
-    b = ctx->buffer;
+    b = ctx->buffers[SEND_BUF];
+
+    if (b->pos == b->last && downstream_output_idle(r)) {
+        b->pos = b->start;
+        b->last = b->start;
+
+        if (ctx->buffers[RECV_BUF]->pos != ctx->buffers[RECV_BUF]->last) {
+            swap_buffers(ctx);
+            b = ctx->buffers[SEND_BUF];
+            *activity = 1;
+        }
+    }
 
     if (b->pos == b->last && !ctx->upstream_empty_datagram &&
         downstream_output_idle(r)) {
@@ -768,7 +791,7 @@ send_downstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         /*
          * Call upstream filters, upstream filters are used to
          * transform data for padding / capsules.
-         * Data is read directly into buffer, so we reserve
+         * Data is read directly into the send buffer, so we reserve
          * a 32 bytes field for storing additional headers.
          * downstream_out->buf must never be mutated. It always
          * points to the 32 bytes fixed buffer.

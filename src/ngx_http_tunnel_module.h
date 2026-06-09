@@ -20,6 +20,9 @@
 #define CAPSULE_DATAGRAM_CONTEXT_ID 0x00
 #define NGX_HTTP_TUNNEL_MAX_DATAGRAM_CAPSULE 65508
 
+#define SEND_BUF 0
+#define RECV_BUF 1
+
 #define NGX_HTTP_TUNNEL_NGINX_1_31_0 1031000
 
 typedef struct ngx_http_tunnel_ctx_s ngx_http_tunnel_ctx_t;
@@ -82,7 +85,7 @@ struct ngx_http_tunnel_ctx_s {
     ngx_http_request_t                  *request;
     ngx_chain_t                         *downstream_in; /* r->request_body->bufs */
 
-    ngx_buf_t                           *buffer;
+    ngx_buf_t                           *buffers[2];
     ngx_chain_t                         downstream_out; /* 32 bytes header reserve */
 
     size_t                              flush_size;

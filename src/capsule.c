@@ -213,7 +213,7 @@ tunnel_capsule_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
     size_t              capsule_len, context_len, header_len, payload_len;
     ngx_buf_t          *b, *hb;
 
-    b = ctx->buffer;
+    b = ctx->buffers[SEND_BUF];
 
     payload_len = (size_t)(b->last - b->pos);
     if (payload_len == 0 && !ctx->upstream_empty_datagram) {
