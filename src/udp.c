@@ -43,10 +43,6 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 
     tscf = ngx_http_get_module_srv_conf(r, ngx_http_tunnel_connect_module);
 
-    if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
-
     rc = tunnel_udp_set_target(r);
     if (rc != NGX_OK) {
         return rc;
@@ -57,6 +53,14 @@ tunnel_udp_init_upstream(ngx_http_request_t *r, ngx_http_tunnel_ctx_t *ctx)
 
     ctx->capsule = ngx_pcalloc(r->pool, sizeof(tunnel_capsule_ctx_t));
     if (ctx->capsule == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    if (tunnel_connect_send_response(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -84,20 +88,10 @@ ngx_int_t
 tunnel_udp_process_header(ngx_http_request_t *r)
 {
     ngx_int_t              rc;
-    ngx_table_elt_t       *h;
     ngx_http_tunnel_ctx_t *ctx;
     ngx_http_upstream_t   *u;
 
     u = r->upstream;
-
-    h = ngx_list_push(&r->headers_out.headers);
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    h->hash = 1;
-    ngx_str_set(&h->key, "capsule-protocol");
-    ngx_str_set(&h->value, "?1");
 
     u->headers_in.status_n = NGX_HTTP_OK;
     ngx_str_set(&u->headers_in.status_line, "200 Connection Established");

@@ -258,13 +258,17 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         ctx->upstream_filter = tunnel_padding_upstream_filter;
     }
 
+    rc = tunnel_connect_set_target(r, ctx);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
     if (tunnel_connect_init_upstream_peer(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    rc = tunnel_connect_set_target(r, ctx);
-    if (rc != NGX_OK) {
-        return rc;
+    if (tunnel_connect_send_response(r, ctx) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     u = r->upstream;

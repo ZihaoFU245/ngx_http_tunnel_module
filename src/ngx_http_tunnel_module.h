@@ -146,6 +146,8 @@ ngx_int_t tunnel_connect_init_upstream_peer(ngx_http_request_t    *r,
 ngx_int_t tunnel_connect_set_target(ngx_http_request_t    *r,
                                     ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_empty_request(ngx_http_request_t *r);
+ngx_int_t tunnel_connect_send_response(ngx_http_request_t    *r,
+                                       ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_extended_connect_branching(ngx_http_request_t    *r,
                                             ngx_http_tunnel_ctx_t *ctx);
 ngx_int_t tunnel_connect_process_header(ngx_http_request_t *r);
@@ -167,7 +169,6 @@ ngx_int_t tunnel_capsule_upstream_filter(ngx_http_tunnel_ctx_t *ctx,
 
 /* Bidirectional byte relay */
 ngx_int_t tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx);
-ngx_int_t tunnel_relay_send_connected(ngx_http_request_t *r);
 
 ngx_int_t tunnel_relay_init_request_body(ngx_http_tunnel_ctx_t *ctx);
 

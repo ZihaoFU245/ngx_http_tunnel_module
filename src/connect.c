@@ -43,6 +43,50 @@ tunnel_connect_empty_request(ngx_http_request_t *r)
 }
 
 ngx_int_t
+tunnel_connect_send_response(ngx_http_request_t    *r,
+                             ngx_http_tunnel_ctx_t *ctx)
+{
+    ngx_int_t         rc;
+    ngx_table_elt_t *h;
+
+    if (ctx->protocol == CONNECT_UDP) {
+        h = ngx_list_push(&r->headers_out.headers);
+        if (h == NULL) {
+            return NGX_ERROR;
+        }
+
+        h->hash = 1;
+        h->next = NULL;
+        ngx_str_set(&h->key, "capsule-protocol");
+        ngx_str_set(&h->value, "?1");
+    }
+
+    if (tunnel_padding_add_response_header(r, ctx->padding) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    r->keepalive = 0;
+    r->headers_out.status = NGX_HTTP_OK;
+    r->headers_out.content_length_n = -1;
+    r->headers_out.content_length = NULL;
+    ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
+    ngx_str_null(&r->headers_out.content_type);
+
+    rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    if (ngx_http_send_special(r, NGX_HTTP_FLUSH) == NGX_ERROR) {
+        return NGX_ERROR;
+    }
+
+    r->response_sent = 1;
+
+    return NGX_OK;
+}
+
+ngx_int_t
 tunnel_extended_connect_branching(ngx_http_request_t    *r,
                                   ngx_http_tunnel_ctx_t *ctx)
 {
@@ -119,10 +163,6 @@ tunnel_connect_process_header(ngx_http_request_t *r)
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_tunnel_connect_module);
     if (ctx == NULL) {
-        return NGX_ERROR;
-    }
-
-    if (tunnel_padding_add_response_header(r, ctx->padding) != NGX_OK) {
         return NGX_ERROR;
     }
 

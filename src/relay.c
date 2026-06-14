@@ -91,10 +91,6 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
         return rc;
     }
 
-    if (tunnel_relay_send_connected(r) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
     pc->read->handler = tunnel_relay_upstream_read_handler;
     pc->write->handler = tunnel_relay_upstream_write_handler;
     r->read_event_handler = tunnel_relay_downstream_read_handler;
@@ -119,31 +115,6 @@ tunnel_relay_start(ngx_http_tunnel_ctx_t *ctx)
     }
 
     tunnel_relay_process(ctx);
-
-    return NGX_OK;
-}
-
-ngx_int_t
-tunnel_relay_send_connected(ngx_http_request_t *r)
-{
-    ngx_int_t              rc;
-
-    r->headers_out.status = NGX_HTTP_OK;
-    r->headers_out.content_length_n = -1;
-    r->headers_out.content_length = NULL;
-    ngx_str_set(&r->headers_out.status_line, "200 Connection Established");
-    ngx_str_null(&r->headers_out.content_type);
-
-    rc = ngx_http_send_header(r);
-    if (rc == NGX_ERROR || rc > NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    if (ngx_http_send_special(r, NGX_HTTP_FLUSH) == NGX_ERROR) {
-        return NGX_ERROR;
-    }
-
-    r->response_sent = 1;
 
     return NGX_OK;
 }
