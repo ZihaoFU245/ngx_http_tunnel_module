@@ -267,6 +267,10 @@ ngx_http_tunnel_content_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
+    /*
+     * Send 200 OK regardless upstream status, reduces latency and extra
+     * fingerprint.
+     */
     if (tunnel_connect_send_response(r, ctx) != NGX_OK) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }

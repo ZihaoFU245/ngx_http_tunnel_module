@@ -105,7 +105,6 @@ struct ngx_http_tunnel_ctx_s {
     unsigned                            content_handler_ref : 1;
     unsigned                            downstream_eof : 1;
     unsigned                            upstream_write_closed : 1;
-    unsigned                            read_again_event_posted : 1;
     unsigned                            extended_connect : 1;
 
     unsigned                            downstream_empty_datagram : 1;
@@ -187,8 +186,6 @@ void tunnel_relay_downstream_read_handler(ngx_http_request_t *r);
 void tunnel_relay_downstream_write_handler(ngx_http_request_t *r);
 void tunnel_relay_upstream_read_handler(ngx_event_t *ev);
 void tunnel_relay_upstream_write_handler(ngx_event_t *ev);
-void tunnel_relay_process(ngx_http_tunnel_ctx_t *ctx);
-void tunnel_relay_post_downstream_read(ngx_http_tunnel_ctx_t *ctx);
 void tunnel_relay_finalize(ngx_http_tunnel_ctx_t *ctx, ngx_int_t rc);
 void tunnel_relay_cleanup(void *data);
 
