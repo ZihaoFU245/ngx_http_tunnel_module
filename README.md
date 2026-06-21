@@ -1,11 +1,10 @@
 # Nginx HTTP Tunnel Connect Module
 
 > [!NOTE]
-> You might find tunnel performance is limited, typically
-> in throughput. This is likely due to bad configurations.
-> A good configuration can improve performance greatly,
-> such as client max body size and kernel buffers for udp.
-
+> Throughput can be limited due to configurations. Try tune TCP
+> kernel buffers, use BBR congestion control, set larger
+> `http3_stream_buffer_size`, `client_body_buffer_size` and
+> `client_max_body_size` values can boost performance greatly.
 
 **This provides a subset features of HTTP CONNECT
 over HTTP/1.1, HTTP2, and HTTP/3.**
@@ -98,8 +97,8 @@ git apply ../ngx_http_tunnel_module/patches/upstream-1.31.patch
 # BASED ON YOUR NGINX VERSION
 ```
 
-Check nginx build dependency before continue, standard build dependency.
-Below has an example build configuration.
+Check nginx build dependency before continue.
+Below is an example build configuration.
 
 ```bash
 ./auto/configure \
@@ -129,10 +128,8 @@ Below has an example build configuration.
 	--with-http_gzip_static_module \
 	--with-cc-opt='-g -O2 -fPIC -fstack-protector-strong -Wformat -Werror=format-security -D_FORTIFY_SOURCE=3' \
 	--with-ld-opt='-Wl,-z,relro -Wl,-z,now -fPIC' \	
-	--add-dynamic-module=../ngx_http_tunnel_module \
-	--without-http_tunnel_module
-	# Recommended to build without http tunnel module if you use the custom module
-	# Specifically for nginx 1.31.* versions
+	--add-dynamic-module=../ngx_http_tunnel_module
+	# use --add-module to compile it in nginx binary
 ```
 
 Finally, run `make -j$(nproc)`.
@@ -219,8 +216,8 @@ http {
 
 		http2 on;
         http3 on;
-        http3_max_concurrent_streams 128;
-        http3_stream_buffer_size 128k;
+
+        http3_stream_buffer_size 256k;
         quic_gso on;
 
 		add_header Alt-Svc 'h3=":443"; ma=86400';
@@ -231,6 +228,7 @@ http {
 		client_body_buffer_size 256k;
 		client_max_body_size 16M;
 
+		# Resolver must be set, otherwise will result in 502
 		resolver 1.1.1.1 8.8.8.8;
 
 		ssl_certificate  fullchain.pem;
@@ -240,20 +238,19 @@ http {
 		tunnel_connect_buffer_size 64k;         # Buffer size for tunnel relay 
 
 		# NGINX 1.30 AND OLDER ONLY
-		tunnel_connect_proxy_auth_user_file /path/to/.htaccess;
-		tunnel_connect_probe_resistance off;
-		tunnel_connect_probe_resistance_allow_methods "";
+		# tunnel_connect_proxy_auth_user_file /path/to/.htaccess;
+		# tunnel_connect_probe_resistance off;
+		# tunnel_connect_probe_resistance_allow_methods "";
 
 		# NGINX 1.31.0 AND NEWER
-		# auth_basic $connect_auth_realm;
-		# auth_basic_user_file /path/to/.htaccess;
-		# error_page 407 =405 @probe_resistance;
+		auth_basic $connect_auth_realm;
+		auth_basic_user_file /path/to/.htaccess;
+		error_page 407 =405 @probe_resistance;
 
-		# location @probe_resistance {
-		#	 internal;
-		#	 # add_header Allow "GET, POST, OPTIONS" always;
-		# 	 return 405;
-		# }
+		location @probe_resistance {
+			internal;
+			return 405;
+		}
 
         tunnel_connect_padding off;             # Opt in padding scheme for h2/h3
         tunnel_connect_upstream_timeout 60s;
@@ -263,15 +260,9 @@ http {
 		# $connect_target_host is the effective target authority.
 		tunnel_connect_acl_eval_on $is_granted;
 
-		tunnel_connect_udp on; 							# Enable connect udp with capsule protocol
+		tunnel_connect_udp off; 						# Enable connect udp with capsule protocol
 		tunnel_connect_udp_path $request_uri; 			# Path variable for parsing masque path
 
-		# location blocks are recommended to set after
-		# tunnel configurations, as tunnel module
-		# injects a pre-content phase handler to skip
-		# try_files and proxy_pass directive.
-		# do not use return here, as it is in rewrite phase,
-		# it will skip tunnel handler. This is a design decision.
 		location / {
 		    proxy_pass http://localhost:8090;
 
