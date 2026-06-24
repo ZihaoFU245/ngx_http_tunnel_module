@@ -60,6 +60,7 @@ typedef struct {
 	size_t 								buffer_size;
 	ngx_msec_t 							connect_timeout;
 	ngx_msec_t 							idle_timeout;
+	ngx_flag_t 							tcp_nodelay;
 	ngx_flag_t 							probe_resistance;
 	ngx_flag_t 							padding;
 	ngx_uint_t 							acl_eval_index;

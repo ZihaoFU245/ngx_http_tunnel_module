@@ -236,6 +236,7 @@ http {
 
 		tunnel_connect;                        	# Enable tunnel module
 		tunnel_connect_buffer_size 64k;         # Buffer size for tunnel relay 
+		# tunnel_connect_tcp_nodelay on;        # TCP_NODELAY for CONNECT only
 
 		# NGINX 1.30 AND OLDER ONLY
 		# tunnel_connect_proxy_auth_user_file /path/to/.htaccess;
@@ -307,13 +308,17 @@ will be send. This happens when upstream server has no response.
 
 8. `tunnel_connect_idle_timeout`: Time, default to 120s. On timeout, tunnel will be closed.
 
-9. `tunnel_connect_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
+9. `tunnel_connect_tcp_nodelay`: Default to off. Enable TCP_NODELAY for CONNECT tunnels
+without enabling nginx core `tcp_nodelay` for normal HTTP requests. If nginx core
+`tcp_nodelay` is on, CONNECT tunnels already use TCP_NODELAY.
+
+10. `tunnel_connect_acl_eval_on`: Complex value. Accept, integers  from 0-3. 0/1 means access
 deny/allow. 2/3 means access deny/allow with logging.
 
-10. `tunnel_connect_udp`: Default to off. With connect udp over MASQUE capsule protocol. Client
+11. `tunnel_connect_udp`: Default to off. With connect udp over MASQUE capsule protocol. Client
 send header must present `capsule-protocol = ?1`, otherwise 400 rejected.
 
-11. `tunnel_connect_udp_path`: Complex value, MASQUE encode target host and port in path. Default
+12. `tunnel_connect_udp_path`: Complex value, MASQUE encode target host and port in path. Default
 to `$request_uri`.
 
 ## Performance Comparison

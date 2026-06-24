@@ -44,6 +44,13 @@ static ngx_command_t ngx_http_tunnel_commands[] = {
      offsetof(ngx_http_tunnel_srv_conf_t, idle_timeout),
      NULL},
 
+    {ngx_string("tunnel_connect_tcp_nodelay"),
+     NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
+     ngx_conf_set_flag_slot,
+     NGX_HTTP_SRV_CONF_OFFSET,
+     offsetof(ngx_http_tunnel_srv_conf_t, tcp_nodelay),
+     NULL},
+
     {ngx_string("tunnel_connect_probe_resistance"),
      NGX_HTTP_SRV_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot,
@@ -324,6 +331,7 @@ ngx_http_tunnel_create_srv_conf(ngx_conf_t *cf)
     conf->buffer_size = NGX_CONF_UNSET_SIZE;
     conf->connect_timeout = NGX_CONF_UNSET_MSEC;
     conf->idle_timeout = NGX_CONF_UNSET_MSEC;
+    conf->tcp_nodelay = NGX_CONF_UNSET;
     conf->probe_resistance = NGX_CONF_UNSET;
     conf->padding = NGX_CONF_UNSET;
     conf->acl_eval_index = NGX_CONF_UNSET_UINT;
@@ -364,6 +372,7 @@ ngx_http_tunnel_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
                               60000);
     ngx_conf_merge_msec_value(conf->idle_timeout, prev->idle_timeout,
                               120000);
+    ngx_conf_merge_value(conf->tcp_nodelay, prev->tcp_nodelay, 0);
     ngx_conf_merge_value(conf->probe_resistance, prev->probe_resistance, 0);
     ngx_conf_merge_str_value(conf->probe_resistance_allow_methods,
                              prev->probe_resistance_allow_methods, "");
