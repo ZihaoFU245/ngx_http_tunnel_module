@@ -254,7 +254,7 @@ tunnel_padding_upstream_filter(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         return NGX_AGAIN;
     }
 
-    if (payload_size > 65535 ||
+    if (payload_size > NGX_HTTP_TUNNEL_MAX_PADDING_PAYLOAD ||
         (size_t)(b->end - b->last) < NGX_HTTP_TUNNEL_MAX_PADDING_SIZE) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }

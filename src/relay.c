@@ -656,6 +656,10 @@ recv_upstream(ngx_http_tunnel_ctx_t *ctx, ngx_uint_t *activity)
         }
 
         size -= ctx->buffer_tail_reserve;
+
+        if (size > NGX_HTTP_TUNNEL_MAX_PADDING_PAYLOAD) {
+            size = NGX_HTTP_TUNNEL_MAX_PADDING_PAYLOAD;
+        }
     }
 
     if (size == 0) {
