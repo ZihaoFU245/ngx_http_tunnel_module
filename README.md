@@ -57,11 +57,12 @@ before submitting it.
 
 ## Tested Nginx Versions
 
-- Nginx 1.29.* should all be fine, 1.29.8 is tested.
+- Nginx 1.29/28 and some privious version should work, but not
+  recommended to use due to some CVE in nginx.
 
-- Nginx 1.30.0 - 1.30.2 is tested to work.
+- Nginx 1.30.* is tested to work.
 
-- Nginx 1.31.0 - 1.31.1 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
+- Nginx 1.31.0 - 1.31.2 is tested to work, apply `header_parsing.patch` and `upstream-1.31.patch`
 
 ## How to build
 
